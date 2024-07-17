@@ -1,0 +1,14 @@
+[
+  {
+    "model_part": "LLM",
+    "layer_group": "MIDDLE",
+    "layer_type": "MLP",
+    "num_bits": 3
+  },
+  {
+    "model_part": "LLM",
+    "layer_group": "LAST",
+    "layer_type": "MLP",
+    "num_bits": 3
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {
+    "model_part": "LLM",
+    "layer_group": "ALL",
+    "layer_type": "BOTH",
+    "num_bits": 4
+  }
+]

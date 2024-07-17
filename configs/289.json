@@ -1,0 +1,8 @@
+[
+  {
+    "model_part": "VIT",
+    "layer_group": "MIDDLE",
+    "layer_type": "MLP",
+    "num_bits": 8
+  }
+]

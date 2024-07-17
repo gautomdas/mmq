@@ -1,0 +1,8 @@
+[
+  {
+    "model_part": "LLM",
+    "layer_group": "FIRST",
+    "layer_type": "ATTENTION",
+    "num_bits": 5
+  }
+]

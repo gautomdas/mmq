@@ -1,0 +1,8 @@
+[
+  {
+    "model_part": "LLM",
+    "layer_group": "LAST",
+    "layer_type": "ATTENTION",
+    "num_bits": 4
+  }
+]

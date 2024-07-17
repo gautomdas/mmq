@@ -1,0 +1,20 @@
+[
+  {
+    "model_part": "QFORMER",
+    "layer_group": "FIRST",
+    "layer_type": "ATTENTION",
+    "num_bits": 4
+  },
+  {
+    "model_part": "QFORMER",
+    "layer_group": "MIDDLE",
+    "layer_type": "ATTENTION",
+    "num_bits": 4
+  },
+  {
+    "model_part": "QFORMER",
+    "layer_group": "LAST",
+    "layer_type": "ATTENTION",
+    "num_bits": 4
+  }
+]

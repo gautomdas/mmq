@@ -1,0 +1,20 @@
+[
+  {
+    "model_part": "QFORMER",
+    "layer_group": "MIDDLE",
+    "layer_type": "MLP",
+    "num_bits": 16
+  },
+  {
+    "model_part": "QFORMER",
+    "layer_group": "LAST",
+    "layer_type": "MLP",
+    "num_bits": 16
+  },
+  {
+    "model_part": "VIT",
+    "layer_group": "ALL",
+    "layer_type": "MLP",
+    "num_bits": 16
+  }
+]

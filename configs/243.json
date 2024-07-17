@@ -1,0 +1,14 @@
+[
+  {
+    "model_part": "QFORMER",
+    "layer_group": "MIDDLE",
+    "layer_type": "BOTH",
+    "num_bits": 16
+  },
+  {
+    "model_part": "QFORMER",
+    "layer_group": "LAST",
+    "layer_type": "BOTH",
+    "num_bits": 16
+  }
+]

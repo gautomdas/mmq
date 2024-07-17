@@ -1,0 +1,26 @@
+[
+  {
+    "model_part": "LLM",
+    "layer_group": "MIDDLE",
+    "layer_type": "ATTENTION",
+    "num_bits": 3
+  },
+  {
+    "model_part": "LLM",
+    "layer_group": "LAST",
+    "layer_type": "ATTENTION",
+    "num_bits": 3
+  },
+  {
+    "model_part": "VIT",
+    "layer_group": "ALL",
+    "layer_type": "ATTENTION",
+    "num_bits": 3
+  },
+  {
+    "model_part": "QFORMER",
+    "layer_group": "ALL",
+    "layer_type": "ATTENTION",
+    "num_bits": 3
+  }
+]

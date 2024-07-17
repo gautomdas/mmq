@@ -1,0 +1,14 @@
+[
+  {
+    "model_part": "LLM",
+    "layer_group": "LAST",
+    "layer_type": "BOTH",
+    "num_bits": 4
+  },
+  {
+    "model_part": "QFORMER",
+    "layer_group": "ALL",
+    "layer_type": "BOTH",
+    "num_bits": 4
+  }
+]

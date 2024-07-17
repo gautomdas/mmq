@@ -28,7 +28,7 @@ class COCODataset(Dataset):
 
         return image, captions
 
-    def get_image_info(self, img_id):
+    def show_image(self, img_id):
         return self.coco.loadImgs(img_id)[0]
 
     def get_captions(self, img_id):

@@ -1,0 +1,14 @@
+[
+  {
+    "model_part": "VIT",
+    "layer_group": "MIDDLE",
+    "layer_type": "ATTENTION",
+    "num_bits": 8
+  },
+  {
+    "model_part": "VIT",
+    "layer_group": "LAST",
+    "layer_type": "ATTENTION",
+    "num_bits": 8
+  }
+]

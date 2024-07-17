@@ -1,0 +1,14 @@
+[
+  {
+    "model_part": "QFORMER",
+    "layer_group": "FIRST",
+    "layer_type": "MLP",
+    "num_bits": 8
+  },
+  {
+    "model_part": "QFORMER",
+    "layer_group": "MIDDLE",
+    "layer_type": "MLP",
+    "num_bits": 8
+  }
+]

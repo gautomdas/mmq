@@ -1,0 +1,20 @@
+[
+  {
+    "model_part": "VIT",
+    "layer_group": "FIRST",
+    "layer_type": "ATTENTION",
+    "num_bits": 4
+  },
+  {
+    "model_part": "VIT",
+    "layer_group": "LAST",
+    "layer_type": "ATTENTION",
+    "num_bits": 4
+  },
+  {
+    "model_part": "LLM",
+    "layer_group": "ALL",
+    "layer_type": "ATTENTION",
+    "num_bits": 4
+  }
+]
