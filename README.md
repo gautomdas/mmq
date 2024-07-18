@@ -1,8 +1,32 @@
-# blip2-coco
+# Quantization Study of BLIP2
+This repo contains results, notebooks, and code related to quantizing blip2 with various configs. To get an idea of the main logic, look at the below diagram:
+![image](https://github.com/user-attachments/assets/ae2b87be-339c-4a37-856c-90d93f52d39b)
+
+The following files are as follows:
+- `main.py`: The singular file used for quantization + inferencing. This takes in a config as `./configs/<#>.json` and runs it.
+- `blip_quantizer.py`: The quantization class that quantizes a the blip2 model.
+- `inference_pipeline.py`: The inference class that takes a model and tasks to produce `results/<#>.json`.
+- `scoring_pipeline.py`: The scoring class used to convert results to scores based on task. This is separate from the inferencer/quantizer because it only requires the CPU to run.
+- `quant_functions.py`: Functions that are `Tensor`->`Tensor` and perform quantization.
+- `utils.py`: Additional utils used for config loading and model printing.
+- `multi_sbatch.py`: Runs the `main.py` script over many GPUs and different configs.
+
+## Notebooks
+- `demo.ipynb`: The above figure demonstrated in a ipynb
+- `blip2_analysis.ipynb`: Counting linear layers and params for the BLIP2 model
+- `blip2_dropoff_coco.ipynb`: A look at drop off between different quantizations over the whole model
+- `dataset_usage.ipynb`: A simple file showing how the COCO dataset (and others) are loaded
+- `config_creator.ipynb`: Create all combinations of configs based on:
+```
+for each bit width:
+  for each model part (ViT, LLM, QFormer):
+    for each of the 8 combinations of front/middle/end:
+      try with 2 other models quantized, not quantized, 1 of each, and 1 of each the other way
+```
+
+## Running TODO
 - [ ] Add vqa2 dataset+test
 - [ ] Migrate datasets to HF
-- [ ] Put up class for model w/ quantization
-- [ ] Finish testing over ranges
 - [ ] Look at error propagation through layers for quantizing
 - [ ] Add GPTQ and AWQ
 
