@@ -2,6 +2,14 @@
 This repo contains results, notebooks, and code related to quantizing blip2 with various configs. To get an idea of the main logic, look at the below diagram:
 ![image](https://github.com/user-attachments/assets/ae2b87be-339c-4a37-856c-90d93f52d39b)
 
+
+To create env, run, and score:
+```
+# conda env create -f environment.yml`
+python run.py ./configs/1.json
+python score.py ./results/1.json
+```
+
 The following files are as follows:
 - `main.py`: The singular file used for quantization + inferencing. This takes in a config as `./configs/<#>.json` and runs it.
 - `blip_quantizer.py`: The quantization class that quantizes a the blip2 model.
