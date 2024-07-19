@@ -1,0 +1,2 @@
+python run.py    ./configs/16.json
+python run.py    ./configs/17.json

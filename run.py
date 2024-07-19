@@ -29,8 +29,8 @@ def main(config_file):
     print(f"Quantized {quantizer.count_quantized_layers()} layers at {quantizer.get_bits()} bits")
     
     # Set up dataset
-    coco_dataset = COCODataset(ann_file='./data/coco/annotations/captions_val2017.json',
-                               img_dir='./data/coco/val2017')
+    coco_dataset = COCODataset(ann_file='../datasets/cocow/annotations/captions_val2017.json',
+                               img_dir='../datasets/cocow/images/val2017')
     
     # Run inference
     inferencer = InferencePipeline(model, processor, device)
