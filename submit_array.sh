@@ -21,10 +21,10 @@ micromamba activate blip
 
 # Echo the SLURM array task ID
 echo "SLURM_ARRAY_TASK_ID: $SLURM_ARRAY_TASK_ID"
-echo "Offset: 668"
+echo "Offset: 1000"
 
 # Calculate the actual config index based on the task ID
-CONFIG_INDEX=$((SLURM_ARRAY_TASK_ID + 668))
+CONFIG_INDEX=$((SLURM_ARRAY_TASK_ID + 1000))
 echo "CONFIG_INDEX: ${CONFIG_INDEX}"
 
 # Run the Python script with the specific config
