@@ -2,7 +2,11 @@
 This repo contains results, notebooks, and code related to quantizing blip2 with various configs. To get an idea of the main logic, look at the below diagram:
 ![image](https://github.com/user-attachments/assets/ae2b87be-339c-4a37-856c-90d93f52d39b)
 
+## Websites
+- [Home](https://gautomdas.github.io/blip2-coco)
+- [3D Plot](https://gautomdas.github.io/blip2-coco/3d_plot.html)
 
+## To Edit and Run Repo
 To create env, run, and score:
 ```
 # conda env create -f environment.yml`
