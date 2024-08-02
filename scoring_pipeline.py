@@ -5,9 +5,16 @@ from pycocoevalcap.meteor.meteor import Meteor
 from pycocoevalcap.rouge.rouge import Rouge
 from pycocoevalcap.cider.cider import Cider
 from pycocoevalcap.spice.spice import Spice
+import os
+import sys
 
 class ScoringPipeline:
     def __init__(self):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            print("Adding current path to python system paths")
+            sys.path.append(current_dir)
+
         self.tokenizer = PTBTokenizer()
         # self.scorers = [
         #     (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
