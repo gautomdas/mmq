@@ -5,6 +5,7 @@ This repo contains results, notebooks, and code related to quantizing blip2 with
 ## Links
 - [Home](https://gautomdas.github.io/blip2-coco)
 - [3D Plot](https://gautomdas.github.io/blip2-coco/3d_plot.html)
+- [GitHub Repo](https://github.com/gautomdas/blip2-coco)
 
 ## To Edit and Run Repo
 To create env, run, and score:
