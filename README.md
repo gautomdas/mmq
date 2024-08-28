@@ -15,6 +15,8 @@ python run.py ./configs/1.json
 python score.py ./results/1.json
 ```
 
+*IMPORTANT:* The scoring part of this pipeline relies on the `pycocoevalcap` python submodule. To also clone this into the repo run `git clone --recurse-submodules https://github.com/gautomdas/blip2-coco` or if you already downloaded the repo and the `pycocoevalcap` folder is still empty, run `git submodule init && git submodule update`.
+
 ## To recreate the demo file
 1. Download the coco data set to the data folder using the following script (assumes you have the environment loaded): `python download_coco.py`
 2. From there you should be able to run all of `demo.ipynb`
