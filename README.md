@@ -1,4 +1,4 @@
-# Quantization Study of BLIP2
+# mmq project
 This repo contains results, notebooks, and code related to quantizing blip2 with various configs. To get an idea of the main logic, look at the below diagram:
 ![image](https://github.com/user-attachments/assets/ae2b87be-339c-4a37-856c-90d93f52d39b)
 
@@ -17,7 +17,7 @@ python score.py ./results/1.json
 
 *IMPORTANT:* The scoring part of this pipeline relies on the `pycocoevalcap` python submodule. To also clone this into the repo run `git clone --recurse-submodules https://github.com/gautomdas/blip2-coco` or if you already downloaded the repo and the `pycocoevalcap` folder is still empty, run `git submodule init && git submodule update`.
 
-## To recreate the demo file
+## To Recreate the Demo File
 1. Download the coco data set to the data folder using the following script (assumes you have the environment loaded): `python download_coco.py`
 2. From there you should be able to run all of `demo.ipynb`
 3. `demo.ipynb` goes over the 3 main steps in the diagram above
