@@ -16,7 +16,7 @@ python score.py ./results/1.json
 ```
 
 The following files are as follows:
-- `main.py`: The singular file used for quantization + inferencing. This takes in a config as `./configs/<#>.json` and runs it.
+- `run.py`: The singular file used for quantization + inferencing. This takes in a config as `./configs/<#>.json` and runs it.
 - `blip_quantizer.py`: The quantization class that quantizes a the blip2 model.
 - `inference_pipeline.py`: The inference class that takes a model and tasks to produce `results/<#>.json`.
 - `scoring_pipeline.py`: The scoring class used to convert results to scores based on task. This is separate from the inferencer/quantizer because it only requires the CPU to run.
