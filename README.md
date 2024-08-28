@@ -15,6 +15,11 @@ python run.py ./configs/1.json
 python score.py ./results/1.json
 ```
 
+## To recreate the demo file
+1. Download the coco data set to the data folder using the following script (assumes you have the environment loaded): `python download_coco.py`
+2. From there you should be able to run all of `demo.ipynb`
+3. `demo.ipynb` goes over the 3 main steps in the diagram above
+
 The following files are as follows:
 - `run.py`: The singular file used for quantization + inferencing. This takes in a config as `./configs/<#>.json` and runs it.
 - `blip_quantizer.py`: The quantization class that quantizes a the blip2 model.
