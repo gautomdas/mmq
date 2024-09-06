@@ -16,7 +16,6 @@ class InferencePipeline:
             return self._run_image_captioning(dataset, **kwargs) 
         elif task == 'image_text_retrieval':
             return self._run_retrieval(dataset, **kwargs)
-            #return self._run_retrieval(dataset, kwargs.get("k_test", 128), kwargs.get("max_samples", None), **kwargs)
         else:
             raise ValueError(f"Unsupported task: {task}")
 
@@ -41,6 +40,36 @@ class InferencePipeline:
             'predictions': results,
             'references': references
         }
+
+    def _compute_itm(self, image_inputs, text_ids, text_atts):
+        image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(image_inputs.device)
+        query_tokens = self.model.query_tokens.expand(image_inputs.shape[0], -1, -1)
+        query_attention_mask = torch.ones(query_tokens.size()[:-1], dtype=torch.long).to(image_inputs.device)
+        attention_mask = torch.cat([query_attention_mask, text_atts], dim=1)
+
+        del query_attention_mask, text_atts
+
+        query_embeds = self.model.embeddings(
+            input_ids=text_ids,
+            query_embeds=query_tokens
+        )
+
+        query_length = query_tokens.shape[1]
+        del text_ids, query_tokens
+
+        output_itm = self.model.qformer(
+            query_embeds=query_embeds,
+            query_length=query_length,
+            attention_mask=attention_mask,
+            encoder_hidden_states=image_inputs,
+            encoder_attention_mask=image_atts,
+            return_dict=True
+        )
+        vl_embeddings = output_itm.last_hidden_state[:, : query_length, :]
+        del output_itm
+        itm_logit = self.model.itm_head(vl_embeddings)
+        itm_logit = itm_logit[:, :, 1].mean(dim=1).float()
+        return itm_logit
 
     def _run_retrieval(self, dataset, k_test=128, max_samples=None, text_bs=4):
         with torch.no_grad():
@@ -67,15 +96,15 @@ class InferencePipeline:
                     return_tensors="pt"
                 ).to(self.model.device)
 
-                query_embeds = model.embeddings(text_input.input_ids)
-                text_output = model.qformer(
+                query_embeds = self.model.embeddings(text_input.input_ids)
+                text_output = self.model.qformer(
                     query_embeds=query_embeds,
                     query_length=0,
                     attention_mask=text_input.attention_mask,
                     return_dict=True
                 )
                 text_feat = text_output.last_hidden_state[:, 0, :]
-                text_embed = F.normalize(model.text_projection(text_feat))
+                text_embed = F.normalize(self.model.text_projection(text_feat))
                 text_embeds.append(text_embed)
                 text_ids.append(text_input.input_ids)
                 text_atts.append(text_input.attention_mask)
@@ -88,16 +117,16 @@ class InferencePipeline:
             image_embeds = []
             print("Getting image embeddings")
             for i in tqdm(range(0, num_samples)):
-                image = dataset[i]["image"].unsqueeze(0).to(model.device)
+                image = dataset[i]["image"].unsqueeze(0).to(self.model.device)
 
-                vision_outputs = model.vision_model(
+                vision_outputs = self.model.vision_model(
                     pixel_values=image,
                     return_dict=True
                 )
                 vit_feat = vision_outputs[0]
-                image_attention_mask = torch.ones(vit_feat.size()[:-1], dtype=torch.long, device=model.device)
-                query_tokens = model.query_tokens.expand(vit_feat.shape[0], -1, -1)
-                query_outputs = model.qformer(
+                image_attention_mask = torch.ones(vit_feat.size()[:-1], dtype=torch.long, device=self.model.device)
+                query_tokens = self.model.query_tokens.expand(vit_feat.shape[0], -1, -1)
+                query_outputs = self.model.qformer(
                     query_embeds=query_tokens,
                     encoder_hidden_states=vit_feat,
                     encoder_attention_mask=image_attention_mask,
@@ -105,7 +134,7 @@ class InferencePipeline:
                 )
                 del image_attention_mask
                 image_feat = query_outputs.last_hidden_state
-                image_embed = F.normalize(model.vision_projection(image_feat), dim=-1)
+                image_embed = F.normalize(self.model.vision_projection(image_feat), dim=-1)
 
                 vit_feats.append(vit_feat.cpu())
                 image_embeds.append(image_embed)
@@ -127,43 +156,13 @@ class InferencePipeline:
 
             score_matrix_i2t = torch.full(
                 (num_samples, num_text), -100.0
-            ).to(model.device)
+            ).to(self.model.device)
 
             print("Calculating i2t score matrix")
-            def compute_itm(image_inputs, text_ids, text_atts):
-                image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(image_inputs.device)
-                query_tokens = model.query_tokens.expand(image_inputs.shape[0], -1, -1)
-                query_attention_mask = torch.ones(query_tokens.size()[:-1], dtype=torch.long).to(image_inputs.device)
-                attention_mask = torch.cat([query_attention_mask, text_atts], dim=1)
-
-                del query_attention_mask, text_atts
-
-                query_embeds = model.embeddings(
-                    input_ids=text_ids,
-                    query_embeds=query_tokens
-                )
-
-                query_length = query_tokens.shape[1]
-                del text_ids, query_tokens
-
-                output_itm = model.qformer(
-                    query_embeds=query_embeds,
-                    query_length=query_length,
-                    attention_mask=attention_mask,
-                    encoder_hidden_states=image_inputs,
-                    encoder_attention_mask=image_atts,
-                    return_dict=True
-                )
-                vl_embeddings = output_itm.last_hidden_state[:, : query_length, :]
-                del output_itm
-                itm_logit = model.itm_head(vl_embeddings)
-                itm_logit = itm_logit[:, :, 1].mean(dim=1).float()
-                return itm_logit
-
             for i, sims in enumerate(tqdm(sims_matrix)):
                 topk_sim, topk_idx = sims.topk(k=k_test, dim=0)
-                image_inputs = vit_feats[i].repeat(k_test, 1, 1).to(model.device)
-                score = compute_itm(image_inputs, text_ids[topk_idx], text_atts[topk_idx]).float()
+                image_inputs = vit_feats[i].repeat(k_test, 1, 1).to(self.model.device)
+                score = self._compute_itm(image_inputs, text_ids[topk_idx], text_atts[topk_idx]).float()
                 del image_inputs
 
                 score_matrix_i2t[i, topk_idx] = score + topk_sim
@@ -172,13 +171,13 @@ class InferencePipeline:
             sims_matrix = sims_matrix.t()
             score_matrix_t2i = torch.full(
                 (num_text, num_samples), -100.0
-            ).to(model.device)
+            ).to(self.model.device)
 
             print("Calculating t2i score matrix")
             for i, sims in enumerate(tqdm(sims_matrix)):
                 topk_sim, topk_idx = sims.topk(k=k_test, dim=0)
-                image_inputs = vit_feats[topk_idx.cpu()].to(model.device)
-                score = compute_itm(image_inputs, text_ids[i].repeat(k_test, 1), text_atts[i].repeat(k_test, 1))
+                image_inputs = vit_feats[topk_idx.cpu()].to(self.model.device)
+                score = self._compute_itm(image_inputs, text_ids[i].repeat(k_test, 1), text_atts[i].repeat(k_test, 1))
 
                 score_matrix_t2i[i, topk_idx] = score + topk_sim
 
