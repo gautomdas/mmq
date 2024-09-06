@@ -13,13 +13,14 @@ class InferencePipeline:
 
     def run_inference(self, dataset, task, **kwargs):
         if task == 'image_captioning':
-            return self._run_image_captioning(dataset, kwargs.get("max_samples", None))
-        elif task == 'retrieval':
-            return self._run_retrieval(dataset, kwargs.get("k_test", 128))
+            return self._run_image_captioning(dataset, **kwargs) 
+        elif task == 'image_text_retrieval':
+            return self._run_retrieval(dataset, **kwargs)
+            #return self._run_retrieval(dataset, kwargs.get("k_test", 128), kwargs.get("max_samples", None), **kwargs)
         else:
             raise ValueError(f"Unsupported task: {task}")
 
-    def _run_image_captioning(self, dataset, max_samples):
+    def _run_image_captioning(self, dataset, max_samples=None):
         results = []
         references = []
         
@@ -41,21 +42,21 @@ class InferencePipeline:
             'references': references
         }
 
-    def _run_retrieval(self, dataset, k_test):
+    def _run_retrieval(self, dataset, k_test=128, max_samples=None, text_bs=4):
         with torch.no_grad():
             tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", truncation_side="right")
             tokenizer.add_special_tokens({"bos_token": "[DEC]"})
             processor = AutoProcessor.from_pretrained("Salesforce/blip2-itm-vit-g")
 
+            num_samples = min(len(dataset), max_samples or len(dataset))
             texts = dataset.text
-            num_text = len(texts)
-            text_bs = 1
+            num_text = min(len(texts), 5*max_samples) if max_samples else len(texts)
             text_ids = []
             text_embeds = []
             text_atts = []
             model = self.model
-            print(self.model.device)
-            print("Tokenizing captions")
+
+            print("Getting text embeddings")
             for i in tqdm(range(0, num_text, text_bs)):
                 text = texts[i : min(num_text, i + text_bs)]
                 text_input = tokenizer(
@@ -85,12 +86,10 @@ class InferencePipeline:
 
             vit_feats = []
             image_embeds = []
-            print("Getting image features")
-            for samples in tqdm(dataset):
-                image = samples["image"]
-                image = samples["image"].unsqueeze(0).to(model.device)
+            print("Getting image embeddings")
+            for i in tqdm(range(0, num_samples)):
+                image = dataset[i]["image"].unsqueeze(0).to(model.device)
 
-                #image = processor(images=image, text=None, return_tensors="pt")["pixel_values"].to(model.device)
                 vision_outputs = model.vision_model(
                     pixel_values=image,
                     return_dict=True
@@ -127,11 +126,10 @@ class InferencePipeline:
             del image_embeds
 
             score_matrix_i2t = torch.full(
-                (len(dataset.image), len(texts)), -100.0
+                (num_samples, num_text), -100.0
             ).to(model.device)
 
-            print("Calculating sim matrix")
-
+            print("Calculating i2t score matrix")
             def compute_itm(image_inputs, text_ids, text_atts):
                 image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(image_inputs.device)
                 query_tokens = model.query_tokens.expand(image_inputs.shape[0], -1, -1)
@@ -163,7 +161,7 @@ class InferencePipeline:
                 return itm_logit
 
             for i, sims in enumerate(tqdm(sims_matrix)):
-                topk_sim, topk_idx = torch.topk(sims, k_test)
+                topk_sim, topk_idx = sims.topk(k=k_test, dim=0)
                 image_inputs = vit_feats[i].repeat(k_test, 1, 1).to(model.device)
                 score = compute_itm(image_inputs, text_ids[topk_idx], text_atts[topk_idx]).float()
                 del image_inputs
@@ -173,9 +171,10 @@ class InferencePipeline:
 
             sims_matrix = sims_matrix.t()
             score_matrix_t2i = torch.full(
-                (len(texts), len(dataset.image)), -100.0
+                (num_text, num_samples), -100.0
             ).to(model.device)
 
+            print("Calculating t2i score matrix")
             for i, sims in enumerate(tqdm(sims_matrix)):
                 topk_sim, topk_idx = sims.topk(k=k_test, dim=0)
                 image_inputs = vit_feats[topk_idx.cpu()].to(model.device)
@@ -183,7 +182,12 @@ class InferencePipeline:
 
                 score_matrix_t2i[i, topk_idx] = score + topk_sim
 
-            return score_matrix_i2t.cpu().numpy(), score_matrix_t2i.cpu().numpy()
+            return {
+                "scores_i2t": score_matrix_i2t.cpu().numpy(),
+                "scores_t2i": score_matrix_t2i.cpu().numpy(),
+                "txt2img": dataset.txt2img,
+                "img2txt": dataset.img2txt
+            }
 
     def save_results(self, results, filename):
         with open(filename, 'w') as f:

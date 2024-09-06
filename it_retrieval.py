@@ -41,7 +41,6 @@ img_transform = transforms.Compose(
     ]
 )
 
-print(torch.cuda.is_available())
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 flickr30k = Flickr30kEvalDataset(
@@ -58,7 +57,7 @@ model = Blip2ForImageTextRetrieval.from_pretrained("Salesforce/blip2-itm-vit-g",
 inferencer = InferencePipeline(model, device)
 scorer = ScoringPipeline()
 
-results = inferencer.run_inference(flickr30k, task="retrieval")
-retrieval_results = scorer.compute_scores(results, "image_text_retrieval", txt2img=flickr30k.txt2img, img2txt=flickr30k.img2txt)
+results = inferencer.run_inference(flickr30k, task="image_text_retrieval")
+retrieval_results = scorer.compute_scores(results, "image_text_retrieval")
 
 print(retrieval_results)

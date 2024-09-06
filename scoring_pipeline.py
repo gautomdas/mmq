@@ -64,8 +64,11 @@ class ScoringPipeline:
 
         return scores
 
-    def _compute_retrieval_scores(self, results, txt2img, img2txt):
-        scores_i2t, scores_t2i = results
+    def _compute_retrieval_scores(self, results): 
+        scores_i2t = results["scores_i2t"]
+        scores_t2i = results["scores_t2i"]
+        txt2img = results["txt2img"]
+        img2txt = results["img2txt"]
         # Images->Text
         ranks = np.zeros(scores_i2t.shape[0])
         for index, score in enumerate(scores_i2t):
@@ -79,7 +82,6 @@ class ScoringPipeline:
             ranks[index] = rank
 
         # Compute metrics
-        print(len(np.where(ranks < 1)[0]) / len(ranks))
         tr1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
         tr5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)
         tr10 = 100.0 * len(np.where(ranks < 10)[0]) / len(ranks)
