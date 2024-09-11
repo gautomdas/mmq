@@ -1,5 +1,4 @@
-data/coco/
-data/flickr30k/
+data/
 trash/
 .virtual_documents/
 dataset/__pycache__/

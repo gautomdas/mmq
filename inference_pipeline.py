@@ -1,9 +1,11 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
 from tqdm import tqdm
 import json
 from transformers import BertTokenizer, AutoProcessor
 import numpy as np
+from torch.utils.data import Dataset, DataLoader
 
 class InferencePipeline:
     def __init__(self, model, device, processor=None):
@@ -16,6 +18,8 @@ class InferencePipeline:
             return self._run_image_captioning(dataset, **kwargs) 
         elif task == 'image_text_retrieval':
             return self._run_retrieval(dataset, **kwargs)
+        elif task == "visual_question_answering":
+            return self._run_vqa(dataset, **kwargs) 
         else:
             raise ValueError(f"Unsupported task: {task}")
 
@@ -40,6 +44,50 @@ class InferencePipeline:
             'predictions': results,
             'references': references
         }
+
+    def _run_vqa(self, data, max_samples=None):
+        results = []
+
+        if isinstance(data, DataLoader):
+            for samples in tqdm(data):
+                images = samples["image"]
+                questions = samples["text_input"]
+                question_ids = samples["question_id"]
+
+                inputs = self.processor(images=images, text=questions, return_tensors="pt").to(self.device)
+
+                with torch.no_grad():
+                    out = self.model.generate(**inputs)
+
+                answers = self.processor.batch_decode(out, skip_special_tokens=True)
+                for answer, question_id in zip(answers, question_ids):
+                    results.append({"question_id": question_id, "answer": answer})
+
+        elif isinstance(data, Dataset):
+            if max_samples:
+                data.set_max_samples(min(len(data), max_samples or len(data)))
+
+            for i in tqdm(range(len(data))):
+                image = data[i]["image"]
+                question = data[i]["text_input"]
+                question_id = data[i]["question_id"]
+
+                inputs = self.processor(images=image, text=question, return_tensors="pt").to(self.device)
+
+                with torch.no_grad():
+                    out = self.model.generate(**inputs)
+
+                answer = self.processor.batch_decode(out, skip_special_tokens=True)[0].strip()
+                results.append({"question_id": question_id, "answer": answer})
+        else:
+            return TypeError("Data must either be a dataset or dataloader")
+
+        return {
+            "answers": results,
+            "annotations": data.annotation_dict,
+            "questions": data.question_dict
+        }
+
 
     def _compute_itm(self, image_inputs, text_ids, text_atts):
         image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(image_inputs.device)
@@ -82,7 +130,6 @@ class InferencePipeline:
             text_ids = []
             text_embeds = []
             text_atts = []
-            model = self.model
 
             print("Getting text embeddings")
             for i in tqdm(range(0, num_text, text_bs)):
@@ -186,6 +233,13 @@ class InferencePipeline:
                 "txt2img": dataset.txt2img,
                 "img2txt": dataset.img2txt
             }
+
+    def _predict_answers(model, image, question):
+        print("todo")
+
+   
+            
+
 
     def save_results(self, results, filename):
         with open(filename, 'w') as f:
