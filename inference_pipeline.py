@@ -50,6 +50,9 @@ class InferencePipeline:
         results = []
 
         if isinstance(data, Dataset):
+            if max_samples:
+                data.set_max_samples(max_samples)
+
             data = DataLoader(
                 data,
                 batch_size=1,
@@ -221,13 +224,6 @@ class InferencePipeline:
                 "txt2img": dataset.txt2img,
                 "img2txt": dataset.img2txt
             }
-
-    def _predict_answers(model, image, question):
-        print("todo")
-
-   
-            
-
 
     def save_results(self, results, filename):
         with open(filename, 'w') as f:

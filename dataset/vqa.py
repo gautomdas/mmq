@@ -36,6 +36,8 @@ class VQAv2Eval(Dataset):
         self._create_qa_pairs()
 
     def set_max_samples(self, max_samples):
+        if max_samples > len(self.annotations): 
+            return ValueError(f"Max_samples: {max_samples}, is larger than the current size of the dataset {len(self.annotations)}")
         self.qa_pairs = self.qa_pairs[:max_samples]
         question_ids = set([qa["question_id"] for qa in self.qa_pairs])
 

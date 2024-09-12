@@ -3,7 +3,6 @@ import json
 
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DistributedSampler, DataLoader
 from transformers import Blip2ForConditionalGeneration, Blip2Processor 
 
