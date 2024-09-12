@@ -63,7 +63,7 @@ if __name__ == "__main__":
         model = Blip2ForConditionalGeneration.from_pretrained(
         "Salesforce/blip2-flan-t5-xl", load_in_8bit=True, torch_dtype=torch.float16, device_map=gpu
         )
-        #model = DDP(model, device_ids=[gpu])
+
         inferencer = InferencePipeline(model, gpu, processor)
         scorer = ScoringPipeline()
 

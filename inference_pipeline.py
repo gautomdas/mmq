@@ -77,56 +77,6 @@ class InferencePipeline:
             "questions": data.dataset.question_dict
         }
 
-        """
-        if isinstance(data, DataLoader):
-            for samples in tqdm(data):
-                images = samples["image"]
-                #questions = torch.cat(samples["text_input"], dim=0)
-                questions = samples["text_input"]
-                question_ids = samples["question_id"]
-
-                inputs = self.processor(images=images, text=questions, padding="longest", return_tensors="pt").to(self.device)
-                #inputs = self.processor(images=images, return_tensors="pt").to(self.device)
-
-                with torch.no_grad():
-                    #out = self.model.forward(**inputs, input_ids=questions)
-                    out = self.model.module.generate(**inputs)
-
-                answers = self.processor.batch_decode(out, skip_special_tokens=True)
-                for answer, question_id in zip(answers, question_ids):
-                    results.append({"question_id": question_id, "answer": answer})
-
-            dist.barrier()
-
-            return {"answers": results}
-
-        elif isinstance(data, Dataset):
-            if max_samples:
-                data.set_max_samples(min(len(data), max_samples or len(data)))
-
-            for i in tqdm(range(len(data))):
-                image = data[i]["image"]
-                question = data[i]["text_input"]
-                question_id = data[i]["question_id"]
-
-                inputs = self.processor(images=image, text=question, return_tensors="pt").to(self.device)
-
-                with torch.no_grad():
-                    out = self.model.generate(**inputs)
-
-                answer = self.processor.batch_decode(out, skip_special_tokens=True)[0].strip()
-                results.append({"question_id": question_id, "answer": answer})
-        else:
-            return TypeError("Data must either be a dataset or dataloader")
-
-        return {
-            "answers": results,
-            "annotations": data.annotation_dict,
-            "questions": data.question_dict
-        }
-        """
-
-
     def _compute_itm(self, image_inputs, text_ids, text_atts):
         image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(image_inputs.device)
         query_tokens = self.model.query_tokens.expand(image_inputs.shape[0], -1, -1)
