@@ -75,7 +75,6 @@ class InferencePipeline:
         with torch.no_grad():
             tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", truncation_side="right")
             tokenizer.add_special_tokens({"bos_token": "[DEC]"})
-            processor = AutoProcessor.from_pretrained("Salesforce/blip2-itm-vit-g")
 
             num_samples = min(len(dataset), max_samples or len(dataset))
             texts = dataset.text
