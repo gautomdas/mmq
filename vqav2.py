@@ -81,10 +81,15 @@ if __name__ == "__main__":
                 "questions": vqav2.question_dict
             }
 
+            question_ids = set()
             for rank_id in range(world_size):
                 with open(os.path.join(result_dir, "%d_results.json" % rank_id), 'r') as f:
                     rank_results = json.load(f)
-                    results["answers"] += rank_results["answers"]
+                    for answer in rank_results["answers"]:
+                        question_id = answer["question_id"] 
+                        if question_id not in question_ids:
+                            results["answers"].append(answer)
+                            question_ids.add(question_id)
     
             compute_vqa_results(results, scorer, os.path.join(result_dir, "results.json"))
     
