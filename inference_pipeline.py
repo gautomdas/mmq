@@ -6,6 +6,7 @@ import json
 from transformers import BertTokenizer, AutoProcessor
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
+import torch.distributed as dist
 
 class InferencePipeline:
     def __init__(self, model, device, processor=None):
@@ -45,23 +46,59 @@ class InferencePipeline:
             'references': references
         }
 
-    def _run_vqa(self, data, max_samples=None):
+    def _run_vqa(self, data, distributed=False, max_samples=None):
         results = []
 
+        if isinstance(data, Dataset):
+            data = DataLoader(
+                data,
+                batch_size=1,
+                shuffle=False,
+                collate_fn=data.collater
+            )
+
+        for samples in tqdm(data):
+            images = samples["image"]
+            questions = samples["text_input"]
+            question_ids = samples["question_id"]
+
+            inputs = self.processor(images=images, text=questions, padding="longest", return_tensors="pt").to(self.device)
+
+            with torch.no_grad():
+                out = self.model.generate(**inputs)
+
+            answers = self.processor.batch_decode(out, skip_special_tokens=True)
+            for answer, question_id in zip(answers, question_ids):
+                results.append({"question_id": question_id, "answer": answer})
+            
+        return {
+            "answers": results,
+            "annotations": data.dataset.annotation_dict,
+            "questions": data.dataset.question_dict
+        }
+
+        """
         if isinstance(data, DataLoader):
             for samples in tqdm(data):
                 images = samples["image"]
+                #questions = torch.cat(samples["text_input"], dim=0)
                 questions = samples["text_input"]
                 question_ids = samples["question_id"]
 
-                inputs = self.processor(images=images, text=questions, return_tensors="pt").to(self.device)
+                inputs = self.processor(images=images, text=questions, padding="longest", return_tensors="pt").to(self.device)
+                #inputs = self.processor(images=images, return_tensors="pt").to(self.device)
 
                 with torch.no_grad():
-                    out = self.model.generate(**inputs)
+                    #out = self.model.forward(**inputs, input_ids=questions)
+                    out = self.model.module.generate(**inputs)
 
                 answers = self.processor.batch_decode(out, skip_special_tokens=True)
                 for answer, question_id in zip(answers, question_ids):
                     results.append({"question_id": question_id, "answer": answer})
+
+            dist.barrier()
+
+            return {"answers": results}
 
         elif isinstance(data, Dataset):
             if max_samples:
@@ -87,6 +124,7 @@ class InferencePipeline:
             "annotations": data.annotation_dict,
             "questions": data.question_dict
         }
+        """
 
 
     def _compute_itm(self, image_inputs, text_ids, text_atts):
