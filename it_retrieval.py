@@ -8,29 +8,6 @@ from inference_pipeline import InferencePipeline
 from scoring_pipeline import ScoringPipeline
 from transformers import Blip2ForImageTextRetrieval
 
-def process_caption(caption):
-    max_words = 50
-
-    caption = re.sub(
-        r"([.!\"()*#:;~])",
-        " ",
-        caption.lower(),
-    )
-    caption = re.sub(
-        r"\s{2,}",
-        " ",
-        caption,
-    )
-    caption = caption.rstrip("\n")
-    caption = caption.strip(" ")
-
-    # truncate caption
-    caption_words = caption.split(" ")
-    if len(caption_words) > max_words:
-        caption = " ".join(caption_words[: max_words])
-
-    return caption
-
 if __name__ == "__main__":
     img_transform = transforms.Compose(
         [
@@ -45,10 +22,9 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     flickr30k = Flickr30kEvalDataset(
+        "./data/flickr30k/annotations/flickr30k_test.json", 
         "./data/flickr30k/images_flickr_1k_test", 
-        "./data/flickr30k/annotations", 
         img_transform=img_transform,
-        txt_processor=process_caption,
     )
 
     model = Blip2ForImageTextRetrieval.from_pretrained("Salesforce/blip2-itm-vit-g", torch_dtype=torch.float16).to(device)
