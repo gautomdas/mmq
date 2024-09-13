@@ -3,28 +3,37 @@ import pandas as pd
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
+import json
 
-class Flickr30k(Dataset):
-    def __init__(self, csv_file, img_dir, transform=None):
-        self.data = pd.read_csv(csv_file, delimiter="|", skipinitialspace=True)
-        self.img_dir = img_dir
-        self.transform = transform
-        
-        # Group captions by image
-        self.grouped_data = self.data.groupby('image_name')
-        self.image_names = list(self.grouped_data.groups.keys())
+class Flickr30kEvalDataset(Dataset):
+    def __init__(self, image_root, ann_root, img_transform=None, txt_processor=None):
+        self.annotation = json.load(open(os.path.join(ann_root, "flickr30k_test.json")))
+        self.img_transform = img_transform
+        self.txt_processor = txt_processor 
+        self.image_root = image_root
+
+        self.text = []
+        self.image = []
+        self.txt2img = {}
+        self.img2txt = {}
+
+        txt_id = 0
+        for img_id, ann in enumerate(self.annotation):
+            self.image.append(ann["image"])
+            self.img2txt[img_id] = []
+            for i, caption in enumerate(ann["caption"]):
+                self.text.append(self.txt_processor(caption))
+                self.img2txt[img_id].append(txt_id)
+                self.txt2img[txt_id] = img_id
+                txt_id += 1
 
     def __len__(self):
-        return len(self.image_names)
+        return len(self.annotation)
 
-    def __getitem__(self, idx):
-        img_name = self.image_names[idx]
-        img_path = os.path.join(self.img_dir, img_name)
-        image = Image.open(img_path).convert('RGB')
-        
-        if self.transform:
-            image = self.transform(image)
-        
-        captions = list(self.grouped_data.get_group(img_name)['comment'])
-        
-        return image, captions
+    def __getitem__(self, index):
+        image_path = os.path.join(self.image_root, self.annotation[index]["image"].split("/")[-1])
+        image = Image.open(image_path).convert("RGB")
+
+        image = self.img_transform(image)
+
+        return {"image": image, "index": index}
