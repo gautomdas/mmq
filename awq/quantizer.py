@@ -2,8 +2,8 @@ import torch
 import numpy as np
 import torch.nn as nn
 from transformers import Blip2ForConditionalGeneration, Blip2ForImageTextRetrieval
-from tqdm import tqdm
 
+from tqdm import tqdm
 from collections import defaultdict
 from functools import partial
 from typing import Tuple, List
@@ -12,7 +12,9 @@ import random
 from awq.scaled_modules import ScaledModule
 from awq.utils import *
 
-# base class for AWQ quantizer
+# ====================================================
+# Base AWQ Quantizer Class
+# ====================================================
 class BaseAWQQuantizer():
     
     def __init__(self, model, device, inputs_processor, dataset, **kwargs):
@@ -27,9 +29,8 @@ class BaseAWQQuantizer():
         self.grid_search_size = 20
         self.zero_point = True
 
-        # AutoAWQ uses 128 for LLMs
+        # Calibration set size, AutoAWQ uses 128 for LLMs
         self.n_samples = 128
-        
         self.run_model = None
 
     
@@ -73,21 +74,20 @@ class BaseAWQQuantizer():
 
     @torch.no_grad
     def quantize(self):
+        '''
+            Apply AWQ to self.model, pseudo-quantizing weights in-place
+        '''
 
         layer_groups = self._get_model_layer_groups()
         calibration_set = self._get_calibration_set()
+
+        # Run calibration set through model
         first_inputs, self.layer_args, self.layer_kwargs = self._gather_first_inputs(layer_groups, calibration_set)
 
         for layer_group, modules in layer_groups.items():
-
             self.inps = first_inputs[layer_group]
+
             for i in tqdm(range(len(modules)), desc= f"Quantizing {layer_group}"):
-
-                
-                # TODO: remove
-                # if layer_group not in ['qformer_layers']:
-                # if layer_group not in ['vit_layers', 'llm_layers']:
-
 
                 layer = modules[i]
                 layer = layer.to(self.device)
@@ -97,35 +97,17 @@ class BaseAWQQuantizer():
                 linear_inputs = self._gather_linear_inputs(layer, named_linears, layer_group)
                 grouped_mods = self._group_modules_for_scaling(layer, linear_inputs, layer_group)
 
-                # print(f'linear_inputs: {linear_inputs.keys()}')
-
-                # scales = [
-                #     self._compute_scales(layer, **group)
-                #     for group in grouped_mods    
-                # ]
-
-                scales = []
-                for group in grouped_mods:
-                    # print(group)
-                    scales.append(self._compute_scales(layer, **group))
-
-                # print(scales)
-                # print(torch.unique(scales[0]))
-                # print(torch.unique(scales[1]))
-                # print(torch.unique(scales[2]))
+                # compute scales over each group of modules to quantize
+                # TODO: filter grouped_mods according to our quantization config
+                scales = [
+                    self._compute_scales(layer, **group)
+                    for group in grouped_mods    
+                ]
 
                 # apply scales to prev_op and modules
-                for group, scale in zip(grouped_mods, scales):
-                
+                for group, scale in zip(grouped_mods, scales):                
                     assert torch.all(scale)
-                    
-                    # print('-'*80)
-                    # print(group['prev_op'].weight)
-                    # print('-'*80)
                     self._apply_scales(scale, group['prev_op'], group['modules'], layer)
-                    # print('-'*80)
-                    # print(group['prev_op'].weight)
-                    # print('-'*80)            
 
 
                 # solve for and apply clipping
@@ -134,7 +116,6 @@ class BaseAWQQuantizer():
 
                 # apply pseudo_quant to linear weights
                 for name, module in named_linears.items():
-                    # NOTE: small regression in perplexity if linear layer uses .cpu().float()
                     # module = module.to(device).half()
                     module = module.to(self.device)
                     module.weight.data, scales, zeros = self.pseudo_quantize_tensor(
@@ -142,23 +123,17 @@ class BaseAWQQuantizer():
                     )
 
 
-                # TODO:remove
-                # break
-            
-            # TODO:remove
-            # break
-
-            
-        return layer_groups, first_inputs, self.layer_args, self.layer_kwargs, linear_inputs, scales
-  
-
     def _gather_first_inputs(self, layer_groups, calibration_set):
+        '''
+            Gather initial inputs (+other positional args, kwargs) to each layer group
+            Runs calibration set through model up until the last layer group
+        '''
 
         first_inputs = {}
         layer_args = {}
         layer_kwargs = {}
 
-        # get input and kwargs to layer 0
+        # get input and kwargs to layer 0 (for each group of layers)
         # use this Catcher hack cause forward hooks cannot capture kwargs
         class Catcher(nn.Module):
             def __init__(self, module, layer_group, is_last):
@@ -200,7 +175,7 @@ class BaseAWQQuantizer():
         self.model = self.model.to(self.device)
         calibration_set = calibration_set.to(self.device)
 
-        print('RUNNING CALIBRATION SET')
+        # NOTE: catching raised ValueError to stop inference early
         try:
             self.run_model(calibration_set)
         except ValueError:
@@ -217,6 +192,9 @@ class BaseAWQQuantizer():
        
 
     def _gather_linear_inputs(self, layer, named_linears, layer_group):
+        '''
+            Gather inputs to linear layers using pytorch forward hooks
+        '''
 
         def input_hook(module, input, output, module_name, inputs):
             x = input[0]
@@ -247,6 +225,11 @@ class BaseAWQQuantizer():
         return inputs
     
     def _compute_scales(self, layer, prev_op, modules, inp, parent_module, layer_args, layer_kwargs):
+
+        '''
+            Grid search for scales to preserve salient weights,
+            Minimizes L2 loss between full-precision and quantized output
+        '''
         
         inp = inp.to(self.device)
 
@@ -270,13 +253,9 @@ class BaseAWQQuantizer():
 
         kwargs = sanitize_kwargs(layer_kwargs, parent_module)
 
-     
-        # print(f'layer_args: {layer_args}')
         # compute full precision output
         with torch.no_grad():
-            # fp_output = parent_module(inp, *layer_args, **kwargs)[0]
             fp_output = parent_module(inp, **kwargs)[0]
-            # print(fp_output)
 
         
         # Grid search for best scales
@@ -296,12 +275,9 @@ class BaseAWQQuantizer():
             scales[torch.isnan(scales)] = 1
 
             scales_view = scales.view(1, -1).to(self.device)
-            # print(scales_view)
 
             # Q(W * s)
-            # NOTE: only nn.linear modules for now
-
-            # pseudo-quantize modules
+            # pseudo-quantize modules (nn.linear)
             for mod in modules:
                 mod.weight.mul_(scales_view)
                 mod.weight.data = (
@@ -310,8 +286,6 @@ class BaseAWQQuantizer():
 
             with torch.no_grad():
                 # Q(W * s) * X
-                # q_output = parent_module(inp, *layer_args, **layer_kwargs)[0]
-                # q_output = parent_module(inp, *layer_args, **layer_kwargs)[0]
                 q_output = parent_module(inp, **kwargs)[0]
             
             # Compute loss (L2 NORM)
@@ -334,9 +308,15 @@ class BaseAWQQuantizer():
 
     def _apply_scales(self, scale, prev_op, modules, layer):
 
+        '''
+            Applies scales to weights in modules and fuses scales
+            to prev_op/adds wrapper module
+        '''
+
         scale = scale.to(self.device)
         
-        # define custom pytorch module for scaling
+        # define custom pytorch wrapper module to apply scaling for input
+        # doing this when there isn't a convenient module to fuse scaling with prior to reaching modules
         if isinstance(prev_op, str):
             module = rgetattr(layer, prev_op)
             scaled_mod = ScaledModule(scale, module)
@@ -345,15 +325,18 @@ class BaseAWQQuantizer():
         else:
             prev_op = prev_op.to(self.device)
             
+            # fuse scales with previous LayerNorm
             if isinstance(prev_op, torch.nn.LayerNorm):
                 prev_op.weight.div_(scale)
 
                 if hasattr(prev_op, "bias") and prev_op.bias is not None:
                     prev_op.bias.div_(scale)
 
+            # fuse scales with previous Linear module
             elif isinstance(prev_op, torch.nn.Linear):
                 prev_op.weight[-scale.size(0) :].div_(scale.view(-1, 1))
 
+            # store (W*s)
             for fc in modules:
                 fc.weight.mul_(scale.view(1, -1))
 
@@ -372,11 +355,12 @@ class BaseAWQQuantizer():
 
     @torch.no_grad()
     def _apply_clip(self, modules, clip_list: Tuple[str, torch.Tensor]):
+        '''
+            Clamp outlier values before quantization according to computed clipping values
+        '''
         for name, max_val in clip_list:
             module: nn.Linear = modules[name]
             module.to(self.device)
-
-            # print(f'weights before:{module.weight}')
 
             max_val = max_val.to(module.weight.device)
             org_shape = module.weight.shape
@@ -384,15 +368,16 @@ class BaseAWQQuantizer():
             module.weight.data = module.weight.data.reshape(*max_val.shape[:2], -1)
             module.weight.data = torch.clamp(module.weight.data, -max_val, max_val)
             module.weight.data = module.weight.data.reshape(org_shape)
-
-            # print(f'weights after:{module.weight}')
-
             module.cpu()
 
     def _search_best_clip(self, modules, linear_inputs):
+        '''
+            Grid search for best clipping ranges for each module in modules
+        '''
+
         clip_list = []
 
-        # NOTE: some libraries seem to avoid clipping attention modules
+        # NOTE: awq libraries seem to avoid clipping attention modules
         avoid_clipping = ["q_", "k_", "query", "key", "Wqkv"]
 
         for name in modules:
@@ -419,6 +404,11 @@ class BaseAWQQuantizer():
         max_shrink=0.5,
         n_sample_token=512,
     ):
+        
+        '''
+            Compute best clipping ranges (grid search) for w
+            Minimizes MSE b/w original and quantized values
+        '''
 
         assert w.dim() == 2
         org_w_shape = w.shape
@@ -472,21 +462,39 @@ class BaseAWQQuantizer():
 
         return best_max_val.squeeze(1)
 
+    def _get_calibration_set(self):
+        '''
+            Sample n_samples from self.dataset and return as single tensor
+        '''
+
+        samples = []
+        random.seed(0)
+        indices = random.sample(range(len(self.dataset)), self.n_samples)
+        
+        for i in indices:
+            data = self.dataset[i]
+            sample = self._prepare_input(data[0])
+            samples.append(sample)
+            
+        samples = torch.cat(samples, dim = 0)
+        return samples
 
     # return layers of model to consider for quantization (modify with config file)
     def _get_model_layer_groups(self):
         raise NotImplementedError('_get_model_layers')
     
-    def _get_calibration_set(self):
-        raise NotImplementedError('_get_calibration_set')
-
+    # process calibration set inputs
     def _prepare_input(self):
         raise NotImplementedError('_prepare_input')
     
+    # return groups of modules for weight grouping, scales calculation
     def _group_modules_for_scaling(self, layer, linear_inputs, layer_group):
         raise NotImplementedError('_group_modules_for_scaling')
     
 
+# ======================================================================
+# BLip2ForCondtionalGeneration (captioning task) AWQ Quantizer Class
+# ======================================================================
 class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
 
     def __init__(self, model, device, inputs_processor, dataset):
@@ -496,36 +504,11 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
         self.run_model = model.generate
         
     def _get_model_layer_groups(self):
-        # NOTE: returning all layers for now
         # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
         return {'vit_layers': self.model.vision_model.encoder.layers,
                 'qformer_layers': self.model.qformer.encoder.layer,
                 'llm_layers': self.model.language_model.model.decoder.layers
                }
-
-    def _get_calibration_set(self):
-        # NOTE: small set for testing for now
-
-        samples = []
-        # n = 0
-
-        random.seed(0)
-        indices = random.sample(range(len(self.dataset)), self.n_samples)
-        
-        for i in indices:
-            
-            data = self.dataset[i]
-
-            sample = self._prepare_input(data[0])
-            samples.append(sample)
-            
-            # n += 1
-            # if n == self.n_samples:
-            #     break
-        
-        # NOTE: might have to break this up into batches, check gpu size
-        samples = torch.cat(samples, dim = 0)
-        return samples
 
     def _prepare_input(self, inp):
         X = self.inputs_processor(images=inp, return_tensors="pt").to(self.device)
@@ -629,7 +612,7 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
             # Qformer cross-attn (only present every other layer)
             if hasattr(layer, 'crossattention'):
                 #  NOTE: Qformer cross-attn QKV cant be grouped together because of different sizes of 
-                #  hidden_states versus encoder_hidden_states
+                #  hidden_states and encoder_hidden_states
 
                 grouped_mods.append(
                     dict(
