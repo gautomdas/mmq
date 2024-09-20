@@ -8,7 +8,6 @@ class ScaledModule(nn.Module):
         self.scales = nn.Parameter(scales.data)
         self.module = module
 
-    def forward(self, x):
-        # TODO: check shape here
+    def forward(self, x, *args, **kwargs):
         x = x / self.scales.view(1, 1, -1).to(x.device)
-        return self.module(x)
+        return self.module(x, *args, **kwargs)
