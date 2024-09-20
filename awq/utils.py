@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import gc
 import inspect
 import functools
