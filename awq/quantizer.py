@@ -12,29 +12,45 @@ import random
 from awq.scaled_modules import ScaledModule
 from awq.utils import *
 
+
+# class AWQConfig():
+
+#     def __init__(self, configs):
+
+#         self.settings = {}
+#         for layer_group, config in configs:
+#             self.settings[layer_group]
+
+
+
 # ====================================================
 # Base AWQ Quantizer Class
 # ====================================================
 class BaseAWQQuantizer():
     
-    def __init__(self, model, device, inputs_processor, dataset, **kwargs):
+    def __init__(self, model, device, inputs_processor, dataset, config, **kwargs):
         self.model = model
         self.device = device
         self.inputs_processor = inputs_processor
         self.dataset = dataset
+        self.config = config
 
         # QUANTIZATION SETTINGS
-        self.w_bits = 4
+        # self.w_bits = 4
         self.group_size = 128
         self.grid_search_size = 20
         self.zero_point = True
 
         # Calibration set size, AutoAWQ uses 128 for LLMs
         self.n_samples = 128
+
+        # seed for sampling dataset
+        self.seed = 0 
+
         self.run_model = None
 
     
-    def pseudo_quantize_tensor(self, w: torch.Tensor):
+    def pseudo_quantize_tensor(self, w: torch.Tensor, w_bits):
         org_w_shape = w.shape
         if self.group_size > 0:
             assert org_w_shape[-1] % self.group_size == 0
@@ -46,7 +62,7 @@ class BaseAWQQuantizer():
         if self.zero_point:
             max_val = w.amax(dim=1, keepdim=True)
             min_val = w.amin(dim=1, keepdim=True)
-            max_int = 2**self.w_bits - 1
+            max_int = 2**w_bits - 1
             min_int = 0
             scales = (max_val - min_val).clamp(min=1e-5) / max_int
             zeros = (-torch.round(min_val / scales)).clamp_(min_int, max_int)
@@ -57,8 +73,8 @@ class BaseAWQQuantizer():
         else:
             max_val = w.abs().amax(dim=1, keepdim=True)
             max_val = max_val.clamp(min=1e-5)
-            max_int = 2 ** (self.w_bits- 1) - 1
-            min_int = -(2 ** (self.w_bits - 1))
+            max_int = 2 ** (w_bits- 1) - 1
+            min_int = -(2 ** (w_bits - 1))
             scales = max_val / max_int
             zeros = None
             w = torch.clamp(torch.round(w / scales), min_int, max_int) * scales
@@ -94,11 +110,14 @@ class BaseAWQQuantizer():
 
                 # nn.linear modules within layer to quantize
                 named_linears = get_named_linears(layer)
+                # two dicts with the same keys, mapping module name to nn.linear and module name to bit_width
+                named_linears, w_bits_dict = self._filter_named_linears(named_linears, layer_group)
+                # gather inputs to each nn.Linear via pytorch hooks
                 linear_inputs = self._gather_linear_inputs(layer, named_linears, layer_group)
+                # group weights together as appropriate for model type
                 grouped_mods = self._group_modules_for_scaling(layer, linear_inputs, layer_group)
 
-                # compute scales over each group of modules to quantize
-                # TODO: filter grouped_mods according to our quantization config
+                # compute scales over each group of modules (weight blocks) to quantize
                 scales = [
                     self._compute_scales(layer, **group)
                     for group in grouped_mods    
@@ -111,7 +130,7 @@ class BaseAWQQuantizer():
 
 
                 # solve for and apply clipping
-                clips = self._search_best_clip(named_linears, linear_inputs)
+                clips = self._search_best_clip(named_linears, linear_inputs, w_bits_dict)
                 self._apply_clip(named_linears, clips)
 
                 # apply pseudo_quant to linear weights
@@ -119,8 +138,9 @@ class BaseAWQQuantizer():
                     # module = module.to(device).half()
                     module = module.to(self.device)
                     module.weight.data, scales, zeros = self.pseudo_quantize_tensor(
-                        module.weight.data
+                        module.weight.data, w_bits_dict[name]
                     )
+
 
 
     def _gather_first_inputs(self, layer_groups, calibration_set):
@@ -224,7 +244,7 @@ class BaseAWQQuantizer():
 
         return inputs
     
-    def _compute_scales(self, layer, prev_op, modules, inp, parent_module, layer_kwargs):
+    def _compute_scales(self, layer, prev_op, modules, inp, parent_module, layer_kwargs, w_bits):
 
         '''
             Grid search for scales to preserve salient weights,
@@ -281,7 +301,7 @@ class BaseAWQQuantizer():
             for mod in modules:
                 mod.weight.mul_(scales_view)
                 mod.weight.data = (
-                    self.pseudo_quantize_tensor(mod.weight.data)[0] / scales_view
+                    self.pseudo_quantize_tensor(mod.weight.data, w_bits)[0] / scales_view
                 )
 
             with torch.no_grad():
@@ -370,7 +390,7 @@ class BaseAWQQuantizer():
             module.weight.data = module.weight.data.reshape(org_shape)
             module.cpu()
 
-    def _search_best_clip(self, modules, linear_inputs):
+    def _search_best_clip(self, modules, linear_inputs, w_bits):
         '''
             Grid search for best clipping ranges for each module in modules
         '''
@@ -387,7 +407,7 @@ class BaseAWQQuantizer():
 
             modules[name].to(self.device)
             max_val = self._compute_best_clip(
-                modules[name].weight, linear_inputs[name]
+                modules[name].weight, linear_inputs[name], w_bits[name]
             )
             clip_list.append((name, max_val))
             modules[name].cpu()
@@ -400,6 +420,7 @@ class BaseAWQQuantizer():
         self,
         w: torch.Tensor,
         input_feat: torch.Tensor,
+        w_bits,
         n_grid=20,
         max_shrink=0.5,
         n_sample_token=512,
@@ -443,7 +464,7 @@ class BaseAWQQuantizer():
                 max_val = org_max_val * (1 - i_s / n_grid)
                 min_val = -max_val
                 cur_w = torch.clamp(w, min_val, max_val)
-                q_w = self.pseudo_quantize_tensor(cur_w)[0]
+                q_w = self.pseudo_quantize_tensor(cur_w, w_bits)[0]
                 cur_out = (input_feat * q_w).sum(dim=-1)
 
                 # co, 1, n_group, 1
@@ -468,7 +489,7 @@ class BaseAWQQuantizer():
         '''
 
         samples = []
-        random.seed(0)
+        random.seed(self.seed)
         indices = random.sample(range(len(self.dataset)), self.n_samples)
         
         for i in indices:
@@ -483,6 +504,9 @@ class BaseAWQQuantizer():
     def _get_model_layer_groups(self):
         raise NotImplementedError('_get_model_layers')
     
+    def _filter_named_linears(self, named_linears, layer_group):
+        raise NotImplementedError('_filter_named_linears')
+        
     # process calibration set inputs
     def _prepare_input(self):
         raise NotImplementedError('_prepare_input')
@@ -497,18 +521,86 @@ class BaseAWQQuantizer():
 # ======================================================================
 class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
 
-    def __init__(self, model, device, inputs_processor, dataset):
+    def __init__(self, model, device, inputs_processor, dataset, config):
         assert isinstance(model, Blip2ForConditionalGeneration)
 
-        super().__init__(model, device, inputs_processor, dataset)
+        super().__init__(model, device, inputs_processor, dataset, config)
         self.run_model = model.generate
+        self.group2modules = self._get_group2modules()
+
+
+
+    def _get_group2modules(self):
+
+        group2modules = {}
+
+        group2modules['vit_layers'] = {
+            'self_attn': ['self_attn.qkv'],
+            'self_attn_output' : ['self_attn.projection'],
+            'fc1' : ['mlp.fc1'],
+            'fc2': ['mlp.fc2']
+        }
+
+        group2modules['qformer_layers'] = {
+            'self_attn': ['attention.attention.query', 'attention.attention.key', 'attention.attention.value'],
+            'self_attn_output':['attention.output.dense'],
+            'intermediate_query': ['intermediate_query.dense'],
+            'output_query': ['output_query.dense'],
+            'cross_attn': ['crossattention.attention.query', 'crossattention.attention.key', 'crossattention.attention.value'],
+            'cross_attn_output': ['crossattention.output.dense']
+        }
+
+        group2modules['llm_layers'] = {
+            'self_attn': ['self_attn.k_proj', 'self_attn.v_proj', 'self_attn.q_proj'],
+            'self_attn_output': ['self_attn.out_proj'],
+            'fc1':['fc1'],
+            'fc2': ['fc2']
+        }
+
+        return group2modules
         
     def _get_model_layer_groups(self):
         # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
-        return {'vit_layers': self.model.vision_model.encoder.layers,
-                'qformer_layers': self.model.qformer.encoder.layer,
-                'llm_layers': self.model.language_model.model.decoder.layers
-               }
+
+        layer_groups = {}
+
+        if 'vit_layers' in self.config: 
+            layer_groups['vit_layers'] = self.model.vision_model.encoder.layers
+        if 'qformer_layers' in self.config:
+            layer_groups['qformer_layers'] = self.model.qformer.encoder.layer
+        if 'llm_layers' in self.config:
+            layer_groups['llm_layers'] = self.model.language_model.model.decoder.layers
+
+        return layer_groups
+    
+        # return {'vit_layers': self.model.vision_model.encoder.layers,
+        #         'qformer_layers': self.model.qformer.encoder.layer,
+        #         'llm_layers': self.model.language_model.model.decoder.layers
+        #        }
+
+    def _filter_named_linears(self, named_linears, layer_group):
+
+        def flatten(xss):
+            return [x for xs in xss for x in xs]
+
+
+        valid_modules = []
+        w_bits_by_linear = {}
+
+        for k in self.config[layer_group]:
+
+            module_names = self.group2modules[layer_group][k]
+            valid_modules.append(module_names)
+
+            for name in module_names:
+                w_bits_by_linear[name] = self.config[layer_group][k]
+
+
+        valid_modules = [self.group2modules[layer_group][k] for k in self.config[layer_group]]
+        valid_modules = flatten(valid_modules)
+        filtered_linears = {k:v for k,v in named_linears.items() if k in valid_modules}
+
+        return filtered_linears, w_bits_by_linear
 
     def _prepare_input(self, inp):
         X = self.inputs_processor(images=inp, return_tensors="pt").to(self.device)
@@ -519,138 +611,169 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
 
         if layer_group == 'vit_layers':
             
-            grouped_mods.append(
-                # vit self-attn
-                dict(
-                    prev_op = layer.layer_norm1,
-                    modules = [layer.self_attn.qkv],
-                    inp = linear_inputs['self_attn.qkv'],
-                    parent_module = layer.self_attn,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            # vit self-attn
+            if 'self_attn' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = layer.layer_norm1,
+                        modules = [layer.self_attn.qkv],
+                        inp = linear_inputs['self_attn.qkv'],
+                        parent_module = layer.self_attn,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['self_attn']
+                    )
                 )
-            )
 
-            grouped_mods.append(
-                # vit fc1
-                dict(
-                    prev_op = layer.layer_norm2,
-                    modules = [layer.mlp.fc1],
-                    inp = linear_inputs['mlp.fc1'],
-                    parent_module = layer.mlp.fc1,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'selt_attn_output' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = 'self_attn.projection',
+                        modules = [layer.self_attn.projection],
+                        inp = linear_inputs['self_attn.projection'],
+                        parent_module = layer.self_attn.projection,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['selt_attn_output']
+                    )
                 )
-            )
 
-            grouped_mods.append(
-                 # vit fc2
-                dict(
-                    prev_op = layer.mlp.fc1,
-                    modules = [layer.mlp.fc2],
-                    inp = linear_inputs['mlp.fc2'],
-                    parent_module = layer.mlp.fc2,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'fc1' in self.config[layer_group]:
+                grouped_mods.append(
+                    # vit fc1
+                    dict(
+                        prev_op = layer.layer_norm2,
+                        modules = [layer.mlp.fc1],
+                        inp = linear_inputs['mlp.fc1'],
+                        parent_module = layer.mlp.fc1,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['fc1']
+                    )
                 )
-            )
+
+             # vit fc2
+            if 'fc2' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = layer.mlp.fc1,
+                        modules = [layer.mlp.fc2],
+                        inp = linear_inputs['mlp.fc2'],
+                        parent_module = layer.mlp.fc2,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['fc2']
+                    )
+                )
 
         elif layer_group == 'qformer_layers':
             
             # Qformer self-attn QKV
-            grouped_mods.append(
-                dict(
-                    prev_op = 'attention.attention',
-                    modules = [
-                        layer.attention.attention.query,
-                        layer.attention.attention.key,
-                        layer.attention.attention.value
-                    ],
-                    inp = linear_inputs['attention.attention.query'],
-                    parent_module = layer.attention.attention,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'self_attn' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = 'attention.attention',
+                        modules = [
+                            layer.attention.attention.query,
+                            layer.attention.attention.key,
+                            layer.attention.attention.value
+                        ],
+                        inp = linear_inputs['attention.attention.query'],
+                        parent_module = layer.attention.attention,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['self_attn']
+                    )
                 )
-            )
 
             # Qformer self-attn output
-            grouped_mods.append(
-                dict(
-                    prev_op = 'attention.output.dense',
-                    modules = [layer.attention.output.dense],
-                    inp = linear_inputs['attention.output.dense'],
-                    parent_module = layer.attention.output.dense,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'self_attn_output' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = 'attention.output.dense',
+                        modules = [layer.attention.output.dense],
+                        inp = linear_inputs['attention.output.dense'],
+                        parent_module = layer.attention.output.dense,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['self_attn_output']
+                    )
                 )
-            )
 
             # Qformer intermediate_query
-            grouped_mods.append(
-                dict(
-                    prev_op = 'intermediate_query',
-                    modules = [layer.intermediate_query.dense],
-                    inp = linear_inputs['intermediate_query.dense'],
-                    parent_module = layer.intermediate_query,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'intermediate_query' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = 'intermediate_query',
+                        modules = [layer.intermediate_query.dense],
+                        inp = linear_inputs['intermediate_query.dense'],
+                        parent_module = layer.intermediate_query,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['intermediate_query']
+                    )
                 )
-            )
 
             # Qformer output_query
-            grouped_mods.append(
-                dict(
-                    prev_op = 'output_query.dense',
-                    modules = [layer.output_query.dense],
-                    inp = linear_inputs['output_query.dense'],
-                    parent_module = layer.output_query.dense,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'output_query' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = 'output_query.dense',
+                        modules = [layer.output_query.dense],
+                        inp = linear_inputs['output_query.dense'],
+                        parent_module = layer.output_query.dense,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['output_query']
+                    )
                 )
-            )
 
             # Qformer cross-attn (only present every other layer)
             if hasattr(layer, 'crossattention'):
                 #  NOTE: Qformer cross-attn QKV cant be grouped together (unlike self-attn) 
                 #  because of different sizes of hidden_states and encoder_hidden_states 
-
-                grouped_mods.append(
-                    dict(
-                        prev_op = 'crossattention.attention.query',
-                        modules = [
-                            layer.crossattention.attention.query,
-                        ],
-                        inp = linear_inputs['crossattention.attention.query'],
-                        parent_module = layer.crossattention.attention.query,
-                        layer_kwargs = self.layer_kwargs[layer_group]
+                if 'cross_attn' in self.config[layer_group]:
+                    grouped_mods.append(
+                        dict(
+                            prev_op = 'crossattention.attention.query',
+                            modules = [
+                                layer.crossattention.attention.query,
+                            ],
+                            inp = linear_inputs['crossattention.attention.query'],
+                            parent_module = layer.crossattention.attention.query,
+                            layer_kwargs = self.layer_kwargs[layer_group],
+                            w_bits = self.config[layer_group]['cross_attn']
+                        )
                     )
-                )
-                grouped_mods.append(
-                    dict(
-                        prev_op = 'crossattention.attention.key',
-                        modules = [
-                            layer.crossattention.attention.key,
-                        ],
-                        inp = linear_inputs['crossattention.attention.key'],
-                        parent_module = layer.crossattention.attention.key,
-                        layer_kwargs = self.layer_kwargs[layer_group]
+                    grouped_mods.append(
+                        dict(
+                            prev_op = 'crossattention.attention.key',
+                            modules = [
+                                layer.crossattention.attention.key,
+                            ],
+                            inp = linear_inputs['crossattention.attention.key'],
+                            parent_module = layer.crossattention.attention.key,
+                            layer_kwargs = self.layer_kwargs[layer_group],
+                            w_bits = self.config[layer_group]['cross_attn']
+                        )
                     )
-                )
-                grouped_mods.append(
-                    dict(
-                        prev_op = 'crossattention.attention.value',
-                        modules = [
-                            layer.crossattention.attention.value
-                        ],
-                        inp = linear_inputs['crossattention.attention.value'],
-                        parent_module = layer.crossattention.attention.value,
-                        layer_kwargs = self.layer_kwargs[layer_group]
+                    grouped_mods.append(
+                        dict(
+                            prev_op = 'crossattention.attention.value',
+                            modules = [
+                                layer.crossattention.attention.value
+                            ],
+                            inp = linear_inputs['crossattention.attention.value'],
+                            parent_module = layer.crossattention.attention.value,
+                            layer_kwargs = self.layer_kwargs[layer_group],
+                            w_bits = self.config[layer_group]['cross_attn']
+                        )
                     )
-                )
 
                 # Qformer cross-attn output
-                grouped_mods.append(
-                    dict(
-                        prev_op = 'crossattention.output.dense',
-                        modules = [layer.crossattention.output.dense],
-                        inp = linear_inputs['crossattention.output.dense'],
-                        parent_module = layer.crossattention.output.dense,
-                        layer_kwargs = self.layer_kwargs[layer_group]
+                if 'cross_attn_output' in self.config[layer_group]:
+                    grouped_mods.append(
+                        dict(
+                            prev_op = 'crossattention.output.dense',
+                            modules = [layer.crossattention.output.dense],
+                            inp = linear_inputs['crossattention.output.dense'],
+                            parent_module = layer.crossattention.output.dense,
+                            layer_kwargs = self.layer_kwargs[layer_group],
+                            w_bits = self.config[layer_group]['cross_attn_output']
+                        )
                     )
-                )
 
 
         elif layer_group == 'llm_layers':
@@ -658,53 +781,60 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
             assert layer.do_layer_norm_before, "llm do_layer_norm_before set to false"
 
             # llm attn
-            grouped_mods.append(
-                dict(
-                    prev_op = layer.self_attn_layer_norm,
-                    modules = [
-                        layer.self_attn.q_proj,
-                        layer.self_attn.k_proj,
-                        layer.self_attn.v_proj,
-                    ],
-                    inp = linear_inputs['self_attn.q_proj'],
-                    parent_module = layer.self_attn,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'self_attn' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = layer.self_attn_layer_norm,
+                        modules = [
+                            layer.self_attn.q_proj,
+                            layer.self_attn.k_proj,
+                            layer.self_attn.v_proj,
+                        ],
+                        inp = linear_inputs['self_attn.q_proj'],
+                        parent_module = layer.self_attn,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['self_attn']
+                    )
                 )
-            )
 
             # llm attn output
-            grouped_mods.append(
-                dict(
-                    prev_op = layer.self_attn.v_proj,
-                    modules = [layer.self_attn.out_proj],
-                    inp = linear_inputs['self_attn.out_proj'],
-                    parent_module = layer.self_attn.out_proj,
-                    layer_kwargs = self.layer_kwargs[layer_group]
-
+            if 'self_attn_output' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = layer.self_attn.v_proj,
+                        modules = [layer.self_attn.out_proj],
+                        inp = linear_inputs['self_attn.out_proj'],
+                        parent_module = layer.self_attn.out_proj,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['self_attn_output']
+                    )
                 )
-            )
 
             # LLM FC1
-            grouped_mods.append(
-                dict(
-                    prev_op = layer.final_layer_norm,
-                    modules = [layer.fc1],
-                    inp = linear_inputs['fc1'],
-                    parent_module = layer.fc1,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'fc1' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = layer.final_layer_norm,
+                        modules = [layer.fc1],
+                        inp = linear_inputs['fc1'],
+                        parent_module = layer.fc1,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['fc1']
+                    )
                 )
-            )
 
           # LLM FC2
-            grouped_mods.append(
-                dict(
-                    prev_op = layer.fc1,
-                    modules = [layer.fc2],
-                    inp = linear_inputs['fc2'],
-                    parent_module = layer.fc2,
-                    layer_kwargs = self.layer_kwargs[layer_group]
+            if 'fc2' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = layer.fc1,
+                        modules = [layer.fc2],
+                        inp = linear_inputs['fc2'],
+                        parent_module = layer.fc2,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['fc2']
+                    )
                 )
-            )
 
         return grouped_mods
         
@@ -726,8 +856,8 @@ class Blip2ForImageTextRetrievalAWQQuantizer(BaseAWQQuantizer):
         return {'vit_layers': self.model.vision_model.encoder.layers,
                 'qformer_layers': self.model.qformer.encoder.layer,}
 
-    def _get_calibration_set(self):
-        return [self.dataset[0], self.dataset[1]]
+    # def _get_calibration_set(self):
+    #     return [self.dataset[0], self.dataset[1]]
 
     def _prepare_input(self, batch):
         X = self.processor(images=batch[0], text=batch[1][0], return_tensors="pt").to(self.device, torch.float16)
