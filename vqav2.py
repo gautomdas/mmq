@@ -1,3 +1,4 @@
+import argparse
 import os
 import json
 
@@ -10,10 +11,6 @@ from datasets import VQAv2Eval
 from inference_pipeline import InferencePipeline
 from scoring_pipeline import ScoringPipeline
 
-distributed = True
-num_workers = 1
-batch_size = 64
-result_dir = "./vqa_results"
 
 def init_distributed():
     rank = int(os.environ["RANK"])
@@ -32,6 +29,18 @@ def compute_vqa_results(results, scorer, save_path=None):
             json.dump(vqa_results, f)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog='VQAv2 Eval',
+        description='Performs VQA evaluation using BLIP2 on VQAv2',
+    )
+
+    args.add_argument("--distributed", default=False, type=bool)
+    args.add_argument("--batch_size", default=64, type=int)
+    args.add_argument("--num_workers", default=1, type=int)
+    args.add_argument("--output_dir", default="./output", type=str)
+
+    args = parser.parse_args()
+
     processor = Blip2Processor.from_pretrained("Salesforce/blip2-flan-t5-xl")
     vqav2 = VQAv2Eval(
         "./data/vqav2/val2014",
@@ -39,7 +48,7 @@ if __name__ == "__main__":
         "./data/vqav2/questions",
     )
 
-    if distributed:
+    if args.distributed:
         rank, world_size, gpu = init_distributed()
         dist.barrier()
 
@@ -52,8 +61,8 @@ if __name__ == "__main__":
         # Create DataLoader
         dataloader = DataLoader(
             vqav2, 
-            batch_size=batch_size, 
-            num_workers=num_workers, 
+            batch_size=args.batch_size, 
+            num_workers=args.num_workers, 
             pin_memory=False,
             shuffle=False,
             sampler=sampler,
@@ -70,7 +79,7 @@ if __name__ == "__main__":
             dataloader, task="visual_question_answering"
         )
 
-        with open(os.path.join(result_dir, "%d_results.json" % rank), 'w') as f:
+        with open(os.path.join(args.output_dir, "%d_results.json" % rank), 'w') as f:
             json.dump({"answers": results["answers"]}, f)
         dist.barrier()
 
@@ -83,7 +92,7 @@ if __name__ == "__main__":
 
             question_ids = set()
             for rank_id in range(world_size):
-                with open(os.path.join(result_dir, "%d_results.json" % rank_id), 'r') as f:
+                with open(os.path.join(args.output_dir, "%d_results.json" % rank_id), 'r') as f:
                     rank_results = json.load(f)
                     for answer in rank_results["answers"]:
                         question_id = answer["question_id"] 
@@ -91,7 +100,7 @@ if __name__ == "__main__":
                             results["answers"].append(answer)
                             question_ids.add(question_id)
     
-            compute_vqa_results(results, scorer, os.path.join(result_dir, "results.json"))
+            compute_vqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
     
         dist.destroy_process_group()
     else:
@@ -107,4 +116,4 @@ if __name__ == "__main__":
             vqav2, task="visual_question_answering"
         )
 
-        compute_vqa_results(results, scorer, os.path.join(result_dir, "results.json"))
+        compute_vqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
