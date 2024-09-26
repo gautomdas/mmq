@@ -7,3 +7,5 @@ gptq_results_first_run/
 slurm_files/1_quantization_run/
 slurm_files/2_quantization_run_smaller_bits/
 
+**/*.pyc
+**/__pycache__
