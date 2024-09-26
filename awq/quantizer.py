@@ -224,7 +224,7 @@ class BaseAWQQuantizer():
 
         return inputs
     
-    def _compute_scales(self, layer, prev_op, modules, inp, parent_module, layer_args, layer_kwargs):
+    def _compute_scales(self, layer, prev_op, modules, inp, parent_module, layer_kwargs):
 
         '''
             Grid search for scales to preserve salient weights,
@@ -526,7 +526,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.self_attn.qkv],
                     inp = linear_inputs['self_attn.qkv'],
                     parent_module = layer.self_attn,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -538,7 +537,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.mlp.fc1],
                     inp = linear_inputs['mlp.fc1'],
                     parent_module = layer.mlp.fc1,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -550,7 +548,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.mlp.fc2],
                     inp = linear_inputs['mlp.fc2'],
                     parent_module = layer.mlp.fc2,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -568,7 +565,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     ],
                     inp = linear_inputs['attention.attention.query'],
                     parent_module = layer.attention.attention,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -580,7 +576,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.attention.output.dense],
                     inp = linear_inputs['attention.output.dense'],
                     parent_module = layer.attention.output.dense,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -592,7 +587,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.intermediate_query.dense],
                     inp = linear_inputs['intermediate_query.dense'],
                     parent_module = layer.intermediate_query,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -604,15 +598,14 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.output_query.dense],
                     inp = linear_inputs['output_query.dense'],
                     parent_module = layer.output_query.dense,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
 
             # Qformer cross-attn (only present every other layer)
             if hasattr(layer, 'crossattention'):
-                #  NOTE: Qformer cross-attn QKV cant be grouped together because of different sizes of 
-                #  hidden_states and encoder_hidden_states
+                #  NOTE: Qformer cross-attn QKV cant be grouped together (unlike self-attn) 
+                #  because of different sizes of hidden_states and encoder_hidden_states 
 
                 grouped_mods.append(
                     dict(
@@ -622,7 +615,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                         ],
                         inp = linear_inputs['crossattention.attention.query'],
                         parent_module = layer.crossattention.attention.query,
-                        layer_args = self.layer_args[layer_group],
                         layer_kwargs = self.layer_kwargs[layer_group]
                     )
                 )
@@ -634,7 +626,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                         ],
                         inp = linear_inputs['crossattention.attention.key'],
                         parent_module = layer.crossattention.attention.key,
-                        layer_args = self.layer_args[layer_group],
                         layer_kwargs = self.layer_kwargs[layer_group]
                     )
                 )
@@ -646,7 +637,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                         ],
                         inp = linear_inputs['crossattention.attention.value'],
                         parent_module = layer.crossattention.attention.value,
-                        layer_args = self.layer_args[layer_group],
                         layer_kwargs = self.layer_kwargs[layer_group]
                     )
                 )
@@ -658,7 +648,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                         modules = [layer.crossattention.output.dense],
                         inp = linear_inputs['crossattention.output.dense'],
                         parent_module = layer.crossattention.output.dense,
-                        layer_args = self.layer_args[layer_group],
                         layer_kwargs = self.layer_kwargs[layer_group]
                     )
                 )
@@ -679,7 +668,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     ],
                     inp = linear_inputs['self_attn.q_proj'],
                     parent_module = layer.self_attn,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -691,7 +679,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.self_attn.out_proj],
                     inp = linear_inputs['self_attn.out_proj'],
                     parent_module = layer.self_attn.out_proj,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
 
                 )
@@ -704,7 +691,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.fc1],
                     inp = linear_inputs['fc1'],
                     parent_module = layer.fc1,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -716,7 +702,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     modules = [layer.fc2],
                     inp = linear_inputs['fc2'],
                     parent_module = layer.fc2,
-                    layer_args = self.layer_args[layer_group],
                     layer_kwargs = self.layer_kwargs[layer_group]
                 )
             )
@@ -724,6 +709,10 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
         return grouped_mods
         
 
+
+# ======================================================================
+# BLip2ForImageTextRetrieval (retrieval task) AWQ Quantizer Class
+# ======================================================================
 # TODO:
 class Blip2ForImageTextRetrievalAWQQuantizer(BaseAWQQuantizer):
 
@@ -733,9 +722,9 @@ class Blip2ForImageTextRetrievalAWQQuantizer(BaseAWQQuantizer):
         self.run_model = model.forward
         
     def _get_model_layer_groups(self):
-        # NOTE: returning all layers for now
-        return [*[layer for layer in self.model.vision_model.encoder.layers],
-                *[layer for layer in self.model.qformer.encoder.layer]]
+        # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
+        return {'vit_layers': self.model.vision_model.encoder.layers,
+                'qformer_layers': self.model.qformer.encoder.layer,}
 
     def _get_calibration_set(self):
         return [self.dataset[0], self.dataset[1]]
