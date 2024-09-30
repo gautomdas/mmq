@@ -13,15 +13,6 @@ from awq.scaled_modules import ScaledModule
 from awq.utils import *
 
 
-# class AWQConfig():
-
-#     def __init__(self, configs):
-
-#         self.settings = {}
-#         for layer_group, config in configs:
-#             self.settings[layer_group]
-
-
 
 # ====================================================
 # Base AWQ Quantizer Class
@@ -500,6 +491,34 @@ class BaseAWQQuantizer():
         samples = torch.cat(samples, dim = 0)
         return samples
 
+   
+    def _filter_named_linears(self, named_linears, layer_group):
+        '''
+             Filter nn.Linear modules according to what is defined in config
+        '''
+
+        def flatten(xss):
+            return [x for xs in xss for x in xs]
+
+
+        valid_modules = []
+        w_bits_by_linear = {}
+
+        for k in self.config[layer_group]:
+
+            module_names = self.group2modules[layer_group][k]
+            valid_modules.append(module_names)
+
+            for name in module_names:
+                w_bits_by_linear[name] = self.config[layer_group][k]
+
+
+        valid_modules = [self.group2modules[layer_group][k] for k in self.config[layer_group]]
+        valid_modules = flatten(valid_modules)
+        filtered_linears = {k:v for k,v in named_linears.items() if k in valid_modules}
+
+        return filtered_linears, w_bits_by_linear
+
     # return layers of model to consider for quantization (modify with config file)
     def _get_model_layer_groups(self):
         raise NotImplementedError('_get_model_layers')
@@ -528,6 +547,19 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
         self.run_model = model.generate
         self.group2modules = self._get_group2modules()
 
+
+    def _get_model_layer_groups(self):
+        # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
+        layer_groups = {}
+
+        if 'vit_layers' in self.config: 
+            layer_groups['vit_layers'] = self.model.vision_model.encoder.layers
+        if 'qformer_layers' in self.config:
+            layer_groups['qformer_layers'] = self.model.qformer.encoder.layer
+        if 'llm_layers' in self.config:
+            layer_groups['llm_layers'] = self.model.language_model.model.decoder.layers
+
+        return layer_groups
 
 
     def _get_group2modules(self):
@@ -559,48 +591,6 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
 
         return group2modules
         
-    def _get_model_layer_groups(self):
-        # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
-
-        layer_groups = {}
-
-        if 'vit_layers' in self.config: 
-            layer_groups['vit_layers'] = self.model.vision_model.encoder.layers
-        if 'qformer_layers' in self.config:
-            layer_groups['qformer_layers'] = self.model.qformer.encoder.layer
-        if 'llm_layers' in self.config:
-            layer_groups['llm_layers'] = self.model.language_model.model.decoder.layers
-
-        return layer_groups
-    
-        # return {'vit_layers': self.model.vision_model.encoder.layers,
-        #         'qformer_layers': self.model.qformer.encoder.layer,
-        #         'llm_layers': self.model.language_model.model.decoder.layers
-        #        }
-
-    def _filter_named_linears(self, named_linears, layer_group):
-
-        def flatten(xss):
-            return [x for xs in xss for x in xs]
-
-
-        valid_modules = []
-        w_bits_by_linear = {}
-
-        for k in self.config[layer_group]:
-
-            module_names = self.group2modules[layer_group][k]
-            valid_modules.append(module_names)
-
-            for name in module_names:
-                w_bits_by_linear[name] = self.config[layer_group][k]
-
-
-        valid_modules = [self.group2modules[layer_group][k] for k in self.config[layer_group]]
-        valid_modules = flatten(valid_modules)
-        filtered_linears = {k:v for k,v in named_linears.items() if k in valid_modules}
-
-        return filtered_linears, w_bits_by_linear
 
     def _prepare_input(self, inp):
         X = self.inputs_processor(images=inp, return_tensors="pt").to(self.device)
@@ -856,8 +846,35 @@ class Blip2ForImageTextRetrievalAWQQuantizer(BaseAWQQuantizer):
         return {'vit_layers': self.model.vision_model.encoder.layers,
                 'qformer_layers': self.model.qformer.encoder.layer,}
 
-    # def _get_calibration_set(self):
-    #     return [self.dataset[0], self.dataset[1]]
+   
+    def _get_group2modules(self):
+
+        group2modules = {}
+
+        group2modules['vit_layers'] = {
+            'self_attn': ['self_attn.qkv'],
+            'self_attn_output' : ['self_attn.projection'],
+            'fc1' : ['mlp.fc1'],
+            'fc2': ['mlp.fc2']
+        }
+
+        group2modules['qformer_layers'] = {
+            'self_attn': ['attention.attention.query', 'attention.attention.key', 'attention.attention.value'],
+            'self_attn_output':['attention.output.dense'],
+            'intermediate_txt': ['intermediate.dense'],
+            'output_txt': ['output.dense'],
+            'intermediate_query': ['intermediate_query.dense'],
+            'output_query': ['output_query.dense'],
+            'cross_attn': ['crossattention.attention.query', 'crossattention.attention.key', 'crossattention.attention.value'],
+            'cross_attn_output': ['crossattention.output.dense'],
+
+            # TODO: how to handle these since they aren't a part of a particular layer like
+            # all the other modules
+            # 'vision_proj':4,
+            # 'txt_proj':4,
+            # 'itm_head': 4,
+        }
+
 
     def _prepare_input(self, batch):
         X = self.processor(images=batch[0], text=batch[1][0], return_tensors="pt").to(self.device, torch.float16)
