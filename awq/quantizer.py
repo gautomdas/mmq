@@ -11,6 +11,7 @@ import random
 
 from awq.scaled_modules import ScaledModule
 from awq.utils import *
+# from inference_pipeline import InferencePipeline
 
 
 
@@ -36,9 +37,11 @@ class BaseAWQQuantizer():
         self.n_samples = 128
 
         # seed for sampling dataset
-        self.seed = 0 
+        self.seed = 42 
 
-        self.run_model = None
+        # TODO: REMOVE
+        self.early_stop = True
+        # self.run_model = None
 
     
     def pseudo_quantize_tensor(self, w: torch.Tensor, w_bits):
@@ -91,21 +94,32 @@ class BaseAWQQuantizer():
         # Run calibration set through model
         first_inputs, self.layer_args, self.layer_kwargs = self._gather_first_inputs(layer_groups, calibration_set)
 
+        # return self._gather_first_inputs(layer_groups, calibration_set)
+
+
         for layer_group, modules in layer_groups.items():
             self.inps = first_inputs[layer_group]
 
             for i in tqdm(range(len(modules)), desc= f"Quantizing {layer_group}"):
+                
+                # TODO:remove
+                if layer_group == 'vit_layers':
+                    break
 
                 layer = modules[i]
                 layer = layer.to(self.device)
 
                 # nn.linear modules within layer to quantize
                 named_linears = get_named_linears(layer)
+
+
                 # two dicts with the same keys, mapping module name to nn.linear and module name to bit_width
                 named_linears, w_bits_dict = self._filter_named_linears(named_linears, layer_group)
                 # gather inputs to each nn.Linear via pytorch hooks
                 linear_inputs = self._gather_linear_inputs(layer, named_linears, layer_group)
+
                 # group weights together as appropriate for model type
+                # TODO: can probably just move this to outer for loop, unless supporting per-layer granularity
                 grouped_mods = self._group_modules_for_scaling(layer, linear_inputs, layer_group)
 
                 # compute scales over each group of modules (weight blocks) to quantize
@@ -140,6 +154,11 @@ class BaseAWQQuantizer():
             Runs calibration set through model up until the last layer group
         '''
 
+        # from collections import defaultdict
+        # first_inputs = defaultdict(list)
+        # layer_args = defaultdict(list)
+        # layer_kwargs = defaultdict(list)
+
         first_inputs = {}
         layer_args = {}
         layer_kwargs = {}
@@ -167,6 +186,11 @@ class BaseAWQQuantizer():
                 # preserve rest of positional arguments
                 layer_args[self.layer_group] = args[1:]
                 layer_kwargs[self.layer_group] = kwargs
+
+                # # TODO:TEST
+                # first_inputs[self.layer_group].append(hidden_states)
+                # layer_args[self.layer_group].append(args[1:])
+                # layer_kwargs[self.layer_group].append(kwargs)
                 
                 # early exit for last group of layers
                 if self.is_last:
@@ -178,13 +202,15 @@ class BaseAWQQuantizer():
 
         for i in range(len(keys)):
             layer_group = keys[i]
-            is_last = True if i == len(keys) - 1 else False
+            is_last = True if self.early_stop and i == len(keys) - 1 else False
 
             modules = layer_groups[layer_group]
             modules[0] = Catcher(modules[0], layer_group, is_last)
 
         self.model = self.model.to(self.device)
-        calibration_set = calibration_set.to(self.device)
+
+        if type(calibration_set) == torch.tensor:
+            calibration_set = calibration_set.to(self.device)
 
         # NOTE: catching raised ValueError to stop inference early
         try:
@@ -192,8 +218,10 @@ class BaseAWQQuantizer():
         except ValueError:
             pass
         
-        calibration_set = calibration_set.cpu()
-        clear_memory(calibration_set)
+        
+        if type(calibration_set) == torch.tensor:
+            calibration_set = calibration_set.cpu()
+            clear_memory(calibration_set)
 
         for _, modules in layer_groups.items():
             # restore proper module at beginning of layer group
@@ -287,16 +315,33 @@ class BaseAWQQuantizer():
 
             scales_view = scales.view(1, -1).to(self.device)
 
-            # Q(W * s)
+
+            fail_flag = False
+            # Q(W * s) / s
             # pseudo-quantize modules (nn.linear)
             for mod in modules:
+                
+                # mod.weight.data = mod.weight.data.to(torch.double)
+
+                # TODO: THIS PRODUCES inf SOMETIMES AHHHHHHHHHH
                 mod.weight.mul_(scales_view)
+
+                if torch.isinf(mod.weight.data).sum() != 0:
+                    fail_flag = True
+                    break
+
+                # mod.weight.data = mod.weight.data.to(torch.float16)
+
                 mod.weight.data = (
                     self.pseudo_quantize_tensor(mod.weight.data, w_bits)[0] / scales_view
                 )
+            
+            if fail_flag:
+                parent_module.load_state_dict(org_sd)
+                continue
 
             with torch.no_grad():
-                # Q(W * s) * X
+                # Q(W * s) / s * X
                 q_output = parent_module(inp, **kwargs)[0]
             
             # Compute loss (L2 NORM)
@@ -474,23 +519,6 @@ class BaseAWQQuantizer():
 
         return best_max_val.squeeze(1)
 
-    def _get_calibration_set(self):
-        '''
-            Sample n_samples from self.dataset and return as single tensor
-        '''
-
-        samples = []
-        random.seed(self.seed)
-        indices = random.sample(range(len(self.dataset)), self.n_samples)
-        
-        for i in indices:
-            data = self.dataset[i]
-            sample = self._prepare_input(data[0])
-            samples.append(sample)
-            
-        samples = torch.cat(samples, dim = 0)
-        return samples
-
    
     def _filter_named_linears(self, named_linears, layer_group):
         '''
@@ -518,13 +546,17 @@ class BaseAWQQuantizer():
         filtered_linears = {k:v for k,v in named_linears.items() if k in valid_modules}
 
         return filtered_linears, w_bits_by_linear
+    
+
+    def _get_calibration_set(self):
+        raise NotImplementedError('_get_calibration_set')
 
     # return layers of model to consider for quantization (modify with config file)
     def _get_model_layer_groups(self):
         raise NotImplementedError('_get_model_layers')
     
-    def _filter_named_linears(self, named_linears, layer_group):
-        raise NotImplementedError('_filter_named_linears')
+    # def _filter_named_linears(self, named_linears, layer_group):
+    #     raise NotImplementedError('_filter_named_linears')
         
     # process calibration set inputs
     def _prepare_input(self):
@@ -535,18 +567,52 @@ class BaseAWQQuantizer():
         raise NotImplementedError('_group_modules_for_scaling')
     
 
-# ======================================================================
-# BLip2ForCondtionalGeneration (captioning task) AWQ Quantizer Class
-# ======================================================================
-class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
+
+class Blip2AWQQuantizer(BaseAWQQuantizer):
 
     def __init__(self, model, device, inputs_processor, dataset, config):
-        assert isinstance(model, Blip2ForConditionalGeneration)
-
         super().__init__(model, device, inputs_processor, dataset, config)
-        self.run_model = model.generate
         self.group2modules = self._get_group2modules()
 
+    def _get_group2modules(self):
+
+        group2modules = {}
+
+        if 'vit_layers' in self.config: 
+            group2modules['vit_layers'] = {
+                'self_attn': ['self_attn.qkv'],
+                'self_attn_output' : ['self_attn.projection'],
+                'fc1' : ['mlp.fc1'],
+                'fc2': ['mlp.fc2']
+            }
+
+        if 'qformer_layers' in self.config:
+            group2modules['qformer_layers'] = {
+                'self_attn': ['attention.attention.query', 'attention.attention.key', 'attention.attention.value'],
+                'self_attn_output':['attention.output.dense'],
+                'intermediate_txt': ['intermediate.dense'],
+                'output_txt': ['output.dense'],
+                'intermediate_query': ['intermediate_query.dense'],
+                'output_query': ['output_query.dense'],
+                'cross_attn': ['crossattention.attention.query', 'crossattention.attention.key', 'crossattention.attention.value'],
+                'cross_attn_output': ['crossattention.output.dense'],
+
+                # TODO: how to handle these since they aren't a part of a particular layer like
+                # all the other modules
+                # 'vision_proj':4,
+                # 'txt_proj':4,
+                # 'itm_head': 4,
+            }
+
+        if 'llm_layers' in self.config:
+            group2modules['llm_layers'] = {
+                'self_attn': ['self_attn.k_proj', 'self_attn.v_proj', 'self_attn.q_proj'],
+                'self_attn_output': ['self_attn.out_proj'],
+                'fc1':['fc1'],
+                'fc2': ['fc2']
+            }
+
+        return group2modules
 
     def _get_model_layer_groups(self):
         # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
@@ -560,42 +626,8 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
             layer_groups['llm_layers'] = self.model.language_model.model.decoder.layers
 
         return layer_groups
-
-
-    def _get_group2modules(self):
-
-        group2modules = {}
-
-        group2modules['vit_layers'] = {
-            'self_attn': ['self_attn.qkv'],
-            'self_attn_output' : ['self_attn.projection'],
-            'fc1' : ['mlp.fc1'],
-            'fc2': ['mlp.fc2']
-        }
-
-        group2modules['qformer_layers'] = {
-            'self_attn': ['attention.attention.query', 'attention.attention.key', 'attention.attention.value'],
-            'self_attn_output':['attention.output.dense'],
-            'intermediate_query': ['intermediate_query.dense'],
-            'output_query': ['output_query.dense'],
-            'cross_attn': ['crossattention.attention.query', 'crossattention.attention.key', 'crossattention.attention.value'],
-            'cross_attn_output': ['crossattention.output.dense']
-        }
-
-        group2modules['llm_layers'] = {
-            'self_attn': ['self_attn.k_proj', 'self_attn.v_proj', 'self_attn.q_proj'],
-            'self_attn_output': ['self_attn.out_proj'],
-            'fc1':['fc1'],
-            'fc2': ['fc2']
-        }
-
-        return group2modules
-        
-
-    def _prepare_input(self, inp):
-        X = self.inputs_processor(images=inp, return_tensors="pt").to(self.device)
-        return X['pixel_values']
     
+
     def _group_modules_for_scaling(self, layer, linear_inputs, layer_group):
         grouped_mods = []
 
@@ -639,7 +671,7 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     )
                 )
 
-             # vit fc2
+                # vit fc2
             if 'fc2' in self.config[layer_group]:
                 grouped_mods.append(
                     dict(
@@ -684,20 +716,47 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     )
                 )
 
-            # Qformer intermediate_query
+
+            # Qformer intermediate (txt)
+            if 'intermediate_txt' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = 'intermediate.dense',
+                        modules = [layer.intermediate.dense],
+                        inp = linear_inputs['intermediate.dense'],
+                        parent_module = layer.intermediate.dense,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['intermediate_txt']
+                    )
+                )
+
+            # Qformer output (txt)
+            if 'output_txt' in self.config[layer_group]:
+                grouped_mods.append(
+                    dict(
+                        prev_op = 'output.dense',
+                        modules = [layer.output.dense],
+                        inp = linear_inputs['output.dense'],
+                        parent_module = layer.output.dense,
+                        layer_kwargs = self.layer_kwargs[layer_group],
+                        w_bits = self.config[layer_group]['output_txt']
+                    )
+                )
+
+            # Qformer intermediate_query (img)
             if 'intermediate_query' in self.config[layer_group]:
                 grouped_mods.append(
                     dict(
-                        prev_op = 'intermediate_query',
+                        prev_op = 'intermediate_query.dense',
                         modules = [layer.intermediate_query.dense],
                         inp = linear_inputs['intermediate_query.dense'],
-                        parent_module = layer.intermediate_query,
+                        parent_module = layer.intermediate_query.dense,
                         layer_kwargs = self.layer_kwargs[layer_group],
                         w_bits = self.config[layer_group]['intermediate_query']
                     )
                 )
 
-            # Qformer output_query
+            # Qformer output_query (img)
             if 'output_query' in self.config[layer_group]:
                 grouped_mods.append(
                     dict(
@@ -713,7 +772,7 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
             # Qformer cross-attn (only present every other layer)
             if hasattr(layer, 'crossattention'):
                 #  NOTE: Qformer cross-attn QKV cant be grouped together (unlike self-attn) 
-                #  because of different sizes of hidden_states and encoder_hidden_states 
+                #  because of different shapes of hidden_states and encoder_hidden_states 
                 if 'cross_attn' in self.config[layer_group]:
                     grouped_mods.append(
                         dict(
@@ -813,7 +872,7 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
                     )
                 )
 
-          # LLM FC2
+            # LLM FC2
             if 'fc2' in self.config[layer_group]:
                 grouped_mods.append(
                     dict(
@@ -831,51 +890,72 @@ class Blip2ForConditionalGenerationAWQQuantizer(BaseAWQQuantizer):
 
 
 # ======================================================================
+# BLip2ForCondtionalGeneration (captioning task) AWQ Quantizer Class
+# ======================================================================
+class Blip2ForConditionalGenerationAWQQuantizer(Blip2AWQQuantizer):
+
+    def __init__(self, model, device, inputs_processor, dataset, config):
+        assert isinstance(model, Blip2ForConditionalGeneration)
+        super().__init__(model, device, inputs_processor, dataset, config)
+        self.run_model = model.generate
+
+    def _prepare_input(self, inp):
+        X = self.inputs_processor(images=inp, return_tensors="pt").to(self.device)        
+        return X['pixel_values']
+    
+
+    def _get_calibration_set(self):
+        '''
+            Sample n_samples from self.dataset and return as single tensor
+        '''
+
+        samples = []
+        random.seed(self.seed)
+        indices = random.sample(range(len(self.dataset)), self.n_samples)
+        
+        for i in indices:
+            data = self.dataset[i]
+            sample = self._prepare_input(data[0])
+            samples.append(sample)
+            
+        samples = torch.cat(samples, dim = 0)
+        return samples
+    
+
+
+# ======================================================================
 # BLip2ForImageTextRetrieval (retrieval task) AWQ Quantizer Class
 # ======================================================================
 # TODO:
-class Blip2ForImageTextRetrievalAWQQuantizer(BaseAWQQuantizer):
+class Blip2ForImageTextRetrievalAWQQuantizer(Blip2AWQQuantizer):
 
-    def __init__(self, model, device, inputs_processor, dataset):
+    def __init__(self, model, device, inputs_processor, dataset, config):
         assert isinstance(model, Blip2ForImageTextRetrieval)
-        super().__init__(model, device, inputs_processor, dataset)
-        self.run_model = model.forward
+        super().__init__(model, device, inputs_processor, dataset, config)
+
+        # TODO: TEST
+        self.n_samples = 128
+
+
+    def _get_calibration_set(self):
+
+        random.seed(self.seed)
+        indices = random.sample(range(len(self.dataset)), self.n_samples)
         
-    def _get_model_layer_groups(self):
-        # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
-        return {'vit_layers': self.model.vision_model.encoder.layers,
-                'qformer_layers': self.model.qformer.encoder.layer,}
+        images = []
+        texts = []
+        for i in indices:
+            images.append(self.dataset[i]['image'])
+            texts.append(self.dataset.text[i])
+            
+        samples = self.inputs_processor(images=images, text = texts, 
+                                        padding=True, truncation=True,
+                                        return_tensors="pt").to(self.device, torch.float16)
 
-   
-    def _get_group2modules(self):
+        return samples
 
-        group2modules = {}
-
-        group2modules['vit_layers'] = {
-            'self_attn': ['self_attn.qkv'],
-            'self_attn_output' : ['self_attn.projection'],
-            'fc1' : ['mlp.fc1'],
-            'fc2': ['mlp.fc2']
-        }
-
-        group2modules['qformer_layers'] = {
-            'self_attn': ['attention.attention.query', 'attention.attention.key', 'attention.attention.value'],
-            'self_attn_output':['attention.output.dense'],
-            'intermediate_txt': ['intermediate.dense'],
-            'output_txt': ['output.dense'],
-            'intermediate_query': ['intermediate_query.dense'],
-            'output_query': ['output_query.dense'],
-            'cross_attn': ['crossattention.attention.query', 'crossattention.attention.key', 'crossattention.attention.value'],
-            'cross_attn_output': ['crossattention.output.dense'],
-
-            # TODO: how to handle these since they aren't a part of a particular layer like
-            # all the other modules
-            # 'vision_proj':4,
-            # 'txt_proj':4,
-            # 'itm_head': 4,
-        }
-
-
-    def _prepare_input(self, batch):
-        X = self.processor(images=batch[0], text=batch[1][0], return_tensors="pt").to(self.device, torch.float16)
-        return X
+    
+    def run_model(self, calibration_set):
+        itm_out = self.model(**calibration_set, use_image_text_matching_head=True)
+        calibration_set.to('cpu')
+        clear_memory(calibration_set)
