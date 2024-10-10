@@ -36,6 +36,7 @@ class BaseAWQQuantizer():
         # seed for sampling dataset
         self.seed = 42 
 
+        self.excluded_mods = []
 
     
     def pseudo_quantize_tensor(self, w: torch.Tensor, w_bits):
@@ -82,7 +83,10 @@ class BaseAWQQuantizer():
             Apply AWQ to self.model, pseudo-quantizing weights in-place
         '''
 
+        self.model_size = 0
+
         layer_groups = self._get_model_layer_groups()
+        self._add_mods_to_model_size(self.excluded_mods)
         calibration_set = self._get_calibration_set()
 
         # Run calibration set through model
@@ -518,10 +522,43 @@ class BaseAWQQuantizer():
 
         valid_modules = [self.group2modules[layer_group][k] for k in self.config[layer_group]]
         valid_modules = flatten(valid_modules)
-        filtered_linears = {k:v for k,v in named_linears.items() if k in valid_modules}
+
+        # filtered_linears = {k:v for k,v in named_linears.items() if k in valid_modules}
+
+        filtered_linears = {}
+        for k,v in named_linears.items():
+
+            if k in valid_modules:
+                filtered_linears[k] = v
+                # quantized size (in bits)
+                element_size = w_bits_by_linear[k] 
+
+            else:
+                # bytes --> bits
+                element_size =  (param.element_size() * 8)
+                
+            # add to model size
+            for _,param in v.named_parameters():
+                self.model_size += param.nelement() * element_size
 
         return filtered_linears, w_bits_by_linear
     
+
+    def _add_mods_to_model_size(self, mods):
+
+        size = 0
+
+        for layer in mods:
+            for name, param in layer.named_parameters():
+                #  NOTE: element_size in bits
+                element_size = param.element_size() * 8
+                size += param.nelement() * element_size
+
+        # model buffers (not quantized)
+        for buffer in self.model.buffers():
+            size += buffer.nelement() * (buffer.element_size() * 8)
+        
+        self.model_size += size
 
     def _get_calibration_set(self):
         raise NotImplementedError('_get_calibration_set')
@@ -587,20 +624,6 @@ class Blip2AWQQuantizer(BaseAWQQuantizer):
             }
 
         return group2modules
-
-    def _get_model_layer_groups(self):
-        # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
-        layer_groups = {}
-
-        if 'vit_layers' in self.config: 
-            layer_groups['vit_layers'] = self.model.vision_model.encoder.layers
-        if 'qformer_layers' in self.config:
-            layer_groups['qformer_layers'] = self.model.qformer.encoder.layer
-        if 'llm_layers' in self.config:
-            layer_groups['llm_layers'] = self.model.language_model.model.decoder.layers
-
-        return layer_groups
-    
 
     def _group_modules_for_scaling(self, layer, linear_inputs, layer_group):
         grouped_mods = []
@@ -864,7 +887,7 @@ class Blip2AWQQuantizer(BaseAWQQuantizer):
 
 
 # ======================================================================
-# BLip2ForCondtionalGeneration (captioning task) AWQ Quantizer Class
+# Blip2ForConditionalGeneration (captioning task) AWQ Quantizer Class
 # ======================================================================
 class Blip2ForConditionalGenerationAWQQuantizer(Blip2AWQQuantizer):
 
@@ -872,6 +895,40 @@ class Blip2ForConditionalGenerationAWQQuantizer(Blip2AWQQuantizer):
         assert isinstance(model, Blip2ForConditionalGeneration)
         super().__init__(model, device, inputs_processor, dataset, config)
         self._run_model = model.generate
+        
+        # keep track of excluded (not quantized) modules for model size calc
+        self.excluded_mods = [self.model.language_projection]
+
+
+    def _get_model_layer_groups(self):
+
+
+        # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
+        layer_groups = {}
+
+        if 'vit_layers' in self.config: 
+            layer_groups['vit_layers'] = self.model.vision_model.encoder.layers
+            self.excluded_mods.extend(get_mods(self.model.vision_model, non_linears_only=True))
+        else:
+            self.excluded_mods.extend(get_mods(self.model.vision_model, non_linears_only=False))
+
+        if 'qformer_layers' in self.config:
+            layer_groups['qformer_layers'] = self.model.qformer.encoder.layer
+            self.excluded_mods.extend(get_mods(self.model.qformer, non_linears_only=True))
+        else:
+            self.excluded_mods.extend(get_mods(self.model.qformer, non_linears_only=False))
+
+
+        if 'llm_layers' in self.config:
+            layer_groups['llm_layers'] = self.model.language_model.model.decoder.layers
+            self.excluded_mods.extend(get_mods(self.model.language_model, non_linears_only=True))
+            # exclude this final projection still
+            self.excluded_mods.append(self.model.language_model.lm_head)
+        else:
+            self.excluded_mods.extend((get_mods(self.model.language_model, non_linears_only=False)))
+
+        return layer_groups
+    
 
     def _prepare_input(self, inp):
         X = self.inputs_processor(images=inp, return_tensors="pt").to(self.device)        
@@ -908,6 +965,33 @@ class Blip2ForImageTextRetrievalAWQQuantizer(Blip2AWQQuantizer):
         # TODO: TEST
         self.n_samples = 128
 
+        self.excluded_mods = [self.model.embeddings, 
+                              self.model.vision_projection,
+                              self.model.text_projection,
+                              self.model.itm_head]
+
+
+
+    def _get_model_layer_groups(self):
+
+        # NOTE: should ensure that keys are defined sequentially for early quitting of calibration set run
+        layer_groups = {}
+
+        if 'vit_layers' in self.config: 
+            layer_groups['vit_layers'] = self.model.vision_model.encoder.layers
+            self.excluded_mods.extend(get_mods(self.model.vision_model, non_linears_only=True))
+        else:
+            self.excluded_mods.extend(get_mods(self.model.vision_model, non_linears_only=False))
+
+        if 'qformer_layers' in self.config:
+            layer_groups['qformer_layers'] = self.model.qformer.encoder.layer
+            self.excluded_mods.extend(get_mods(self.model.qformer, non_linears_only=True))
+        else:
+            self.excluded_mods.extend(get_mods(self.model.qformer, non_linears_only=False))
+
+
+        return layer_groups
+    
 
     def _get_calibration_set(self):
 
