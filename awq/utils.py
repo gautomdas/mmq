@@ -21,6 +21,14 @@ def compute_loss(fp_output, q_output):
 def get_named_linears(module):
     return {name: mod for name, mod in module.named_modules() if isinstance(mod, nn.Linear)}
 
+def get_mods(model, non_linears_only = True):
+    children = list(model.children())
+
+    if non_linears_only:
+        return [model] if len(children) == 0 else [ci for c in children for ci in get_mods(c, non_linears_only) if type(ci) != torch.nn.Linear]
+    else:
+        return [model] if len(children) == 0 else [ci for c in children for ci in get_mods(c, non_linears_only)]
+
 
 def sanitize_kwargs(inputs_kwargs, module):
     """
