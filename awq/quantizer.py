@@ -11,8 +11,6 @@ import random
 
 from awq.scaled_modules import ScaledModule
 from awq.utils import *
-# from inference_pipeline import InferencePipeline
-
 
 
 # ====================================================
@@ -28,7 +26,6 @@ class BaseAWQQuantizer():
         self.config = config
 
         # QUANTIZATION SETTINGS
-        # self.w_bits = 4
         self.group_size = 128
         self.grid_search_size = 20
         self.zero_point = True
@@ -39,9 +36,6 @@ class BaseAWQQuantizer():
         # seed for sampling dataset
         self.seed = 42 
 
-        # TODO: REMOVE
-        self.early_stop = True
-        # self.run_model = None
 
     
     def pseudo_quantize_tensor(self, w: torch.Tensor, w_bits):
@@ -94,25 +88,16 @@ class BaseAWQQuantizer():
         # Run calibration set through model
         first_inputs, self.layer_args, self.layer_kwargs = self._gather_first_inputs(layer_groups, calibration_set)
 
-        # return self._gather_first_inputs(layer_groups, calibration_set)
-
-
         for layer_group, modules in layer_groups.items():
             self.inps = first_inputs[layer_group]
 
             for i in tqdm(range(len(modules)), desc= f"Quantizing {layer_group}"):
                 
-                # TODO:remove
-                if layer_group == 'vit_layers':
-                    break
-
                 layer = modules[i]
                 layer = layer.to(self.device)
 
                 # nn.linear modules within layer to quantize
                 named_linears = get_named_linears(layer)
-
-
                 # two dicts with the same keys, mapping module name to nn.linear and module name to bit_width
                 named_linears, w_bits_dict = self._filter_named_linears(named_linears, layer_group)
                 # gather inputs to each nn.Linear via pytorch hooks
@@ -154,11 +139,6 @@ class BaseAWQQuantizer():
             Runs calibration set through model up until the last layer group
         '''
 
-        # from collections import defaultdict
-        # first_inputs = defaultdict(list)
-        # layer_args = defaultdict(list)
-        # layer_kwargs = defaultdict(list)
-
         first_inputs = {}
         layer_args = {}
         layer_kwargs = {}
@@ -186,11 +166,6 @@ class BaseAWQQuantizer():
                 # preserve rest of positional arguments
                 layer_args[self.layer_group] = args[1:]
                 layer_kwargs[self.layer_group] = kwargs
-
-                # # TODO:TEST
-                # first_inputs[self.layer_group].append(hidden_states)
-                # layer_args[self.layer_group].append(args[1:])
-                # layer_kwargs[self.layer_group].append(kwargs)
                 
                 # early exit for last group of layers
                 if self.is_last:
@@ -202,7 +177,7 @@ class BaseAWQQuantizer():
 
         for i in range(len(keys)):
             layer_group = keys[i]
-            is_last = True if self.early_stop and i == len(keys) - 1 else False
+            is_last = True if i == len(keys) - 1 else False
 
             modules = layer_groups[layer_group]
             modules[0] = Catcher(modules[0], layer_group, is_last)
@@ -214,7 +189,7 @@ class BaseAWQQuantizer():
 
         # NOTE: catching raised ValueError to stop inference early
         try:
-            self.run_model(calibration_set)
+            self._run_model(calibration_set)
         except ValueError:
             pass
         
@@ -377,7 +352,6 @@ class BaseAWQQuantizer():
             module = rgetattr(layer, prev_op)
             scaled_mod = ScaledModule(scale, module)
             module = rsetattr(layer, prev_op, scaled_mod)
-
         else:
             prev_op = prev_op.to(self.device)
             
@@ -392,21 +366,22 @@ class BaseAWQQuantizer():
             elif isinstance(prev_op, torch.nn.Linear):
                 prev_op.weight[-scale.size(0) :].div_(scale.view(-1, 1))
 
-            # store (W*s)
-            for fc in modules:
-                fc.weight.mul_(scale.view(1, -1))
-
-            # SANITY checks
+             # SANITY check
             for p in prev_op.parameters():
                 assert torch.isnan(p).sum() == 0
-            for fc in modules:
-                for p in fc.parameters():
-                    assert torch.isnan(p).sum() == 0
-
             prev_op.cpu()
-            for fc in modules:
-                fc.cpu()
-            scale.cpu()
+
+        # store (W*s), quantization applied later
+        for fc in modules:
+            fc.weight.mul_(scale.view(1, -1))
+
+        # SANITY check
+            for p in fc.parameters():
+                assert torch.isnan(p).sum() == 0
+        
+        for fc in modules:
+            fc.cpu()
+        scale.cpu()
 
 
     @torch.no_grad()
@@ -433,7 +408,7 @@ class BaseAWQQuantizer():
 
         clip_list = []
 
-        # NOTE: awq libraries seem to avoid clipping attention modules
+        # NOTE: awq libraries seem to avoid clipping some attention modules
         avoid_clipping = ["q_", "k_", "query", "key", "Wqkv"]
 
         for name in modules:
@@ -443,7 +418,7 @@ class BaseAWQQuantizer():
 
             modules[name].to(self.device)
             max_val = self._compute_best_clip(
-                modules[name].weight, linear_inputs[name], w_bits[name]
+                modules[name].weight, linear_inputs[name], w_bits[name], n_grid = self.grid_search_size
             )
             clip_list.append((name, max_val))
             modules[name].cpu()
@@ -555,9 +530,8 @@ class BaseAWQQuantizer():
     def _get_model_layer_groups(self):
         raise NotImplementedError('_get_model_layers')
     
-    # def _filter_named_linears(self, named_linears, layer_group):
-    #     raise NotImplementedError('_filter_named_linears')
-        
+    def _run_model(self, input):
+        raise NotImplementedError
     # process calibration set inputs
     def _prepare_input(self):
         raise NotImplementedError('_prepare_input')
@@ -897,7 +871,7 @@ class Blip2ForConditionalGenerationAWQQuantizer(Blip2AWQQuantizer):
     def __init__(self, model, device, inputs_processor, dataset, config):
         assert isinstance(model, Blip2ForConditionalGeneration)
         super().__init__(model, device, inputs_processor, dataset, config)
-        self.run_model = model.generate
+        self._run_model = model.generate
 
     def _prepare_input(self, inp):
         X = self.inputs_processor(images=inp, return_tensors="pt").to(self.device)        
@@ -922,11 +896,9 @@ class Blip2ForConditionalGenerationAWQQuantizer(Blip2AWQQuantizer):
         return samples
     
 
-
 # ======================================================================
 # BLip2ForImageTextRetrieval (retrieval task) AWQ Quantizer Class
 # ======================================================================
-# TODO:
 class Blip2ForImageTextRetrievalAWQQuantizer(Blip2AWQQuantizer):
 
     def __init__(self, model, device, inputs_processor, dataset, config):
@@ -955,7 +927,7 @@ class Blip2ForImageTextRetrievalAWQQuantizer(Blip2AWQQuantizer):
         return samples
 
     
-    def run_model(self, calibration_set):
+    def _run_model(self, calibration_set):
         itm_out = self.model(**calibration_set, use_image_text_matching_head=True)
         calibration_set.to('cpu')
         clear_memory(calibration_set)
