@@ -302,7 +302,7 @@ class BaseAWQQuantizer():
                 
                 # mod.weight.data = mod.weight.data.to(torch.double)
 
-                # TODO: THIS PRODUCES inf SOMETIMES AHHHHHHHHHH
+                # TODO: this operation produces an inf sometimes...
                 mod.weight.mul_(scales_view)
 
                 if torch.isinf(mod.weight.data).sum() != 0:
