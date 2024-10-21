@@ -68,8 +68,8 @@ def main(config_path, task):
     pipeline = InferencePipeline(model, device, processor)
     results = pipeline.run_inference(dataset, task = task)
     
-    os.makedirs(f'awq/{task}_results', exist_ok=True)
-    result_path = os.path.join(f"awq/{task}_results", os.path.basename(config_path))
+    os.makedirs(f'{task}_results', exist_ok=True)
+    result_path = os.path.join(f"{task}_results", os.path.basename(config_path))
     print(f"Inference Finished, Saving Results to {result_path}...")
 
     results['model_size'] = quantizer.model_size

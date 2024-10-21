@@ -10,5 +10,4 @@ slurm_files/2_quantization_run_smaller_bits/
 **/*.pyc
 **/__pycache__
 
-awq/captioning_configs
-awq/retrieval_configs
+awq/**/

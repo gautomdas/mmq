@@ -21,7 +21,7 @@ source ~/.bashrc
 micromamba activate MMQ
 
 python  ../run_awq.py \
-       --config_path captioning_configs/awq_42 \
+       --config_path captioning_configs/awq_21 \
        --task image_captioning
 
 wait                                                            # wait for any background processes to complete
