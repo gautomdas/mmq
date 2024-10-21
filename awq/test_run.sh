@@ -21,7 +21,7 @@ source ~/.bashrc
 micromamba activate MMQ
 
 python  ../run_awq.py \
-       --config_path retrieval_configs/awq_42 \
+       --config_path retrieval_configs/awq_26 \
        --task image_text_retrieval
 
 wait                                                            # wait for any background processes to complete

@@ -5,5 +5,4 @@ trash/
 **/*.pyc
 **/__pycache__
 
-awq/captioning_configs
-awq/retrieval_configs
+awq/**/
