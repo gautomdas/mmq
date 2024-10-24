@@ -6,7 +6,7 @@ python captioning_multi_sbatch.py --env slurm_files \
                                   --cores 1 \
                                   --mem 64 \
                                   --output-dirname captioning_output \
-                                  --dryrun
+                                #  --dryrun
                                 #  --base-dir awq/ \
                                 
 

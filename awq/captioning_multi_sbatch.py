@@ -213,7 +213,7 @@ with open(f'{args.base_dir}/{args.output_dirname}/{args.env}/now.txt', "w") as n
         job_args = {arg.name:arg.copy() for arg in job_args}
         
         job_string = ''
-        python_cmd = 'python run_awq.py  '
+        python_cmd = 'python ../run_awq.py  '
         for arg_name, arg in job_args.items():
             python_cmd += arg.cmd_string
             job_string += arg.job_string
