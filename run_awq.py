@@ -32,7 +32,7 @@ def main(config_path, task):
 
 
     elif task == 'image_text_retrieval':
-        model_name = "Salesforce/blip2-itm-vit-g"
+        model_name = "Salesforce/blip2-itm-vit-g-coco"
         model = Blip2ForImageTextRetrieval.from_pretrained(model_name)
         processor = Blip2Processor.from_pretrained(model_name)
 
@@ -43,10 +43,10 @@ def main(config_path, task):
 
         quantizer = Blip2ForImageTextRetrievalAWQQuantizer(model, device, processor, dataset, config)
 
-        img_transform =  transforms.Compose(
+        img_transform = transforms.Compose(
             [
                 transforms.Resize(
-                    (224, 224), interpolation=transforms.InterpolationMode.BICUBIC
+                    (364, 364), interpolation=transforms.InterpolationMode.BICUBIC
                 ),
                 transforms.ToTensor(),
                 transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
