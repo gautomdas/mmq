@@ -21,6 +21,6 @@ source ~/.bashrc
 
 micromamba activate blip
 
-python -m torch.distributed.run --nproc_per_node=8 vqav2.py
+python -m torch.distributed.run --nproc_per_node=8 vqav2.py --batch-size=32
 
 wait
