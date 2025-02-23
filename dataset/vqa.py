@@ -5,7 +5,7 @@ import re
 import pandas as pd
 from PIL import Image
 from torch.utils.data import Dataset
-
+from pathlib import Path
 
 class VQAv2Eval(Dataset):
     def __init__(
@@ -20,7 +20,7 @@ class VQAv2Eval(Dataset):
         self.annotation_dict = json.load(
             open(os.path.join(ann_root, "v2_mscoco_val2014_annotations.json"))
         )
-        print(len(self.annotation_dict["annotations"]))
+        
         self.annotations = self.annotation_dict["annotations"]
         self.question_dict = json.load(
             open(os.path.join(q_root, "v2_OpenEnded_mscoco_val2014_questions.json"))
@@ -32,7 +32,6 @@ class VQAv2Eval(Dataset):
         self.prompt = prompt if prompt else "Question: {} Short answer:"
 
         self.qa_pairs = []
-
         self._create_qa_pairs()
 
     def set_max_samples(self, max_samples):
@@ -90,7 +89,7 @@ class VQAv2Eval(Dataset):
             self.qa_pairs.append(
                 {
                     "question_id": question_id,
-                    "question": self.prompt.format(question["question"]),
+                    "question": question["question"],
                     "answer": [
                         answer_dict["answer"] for answer_dict in annotation["answers"]
                     ],
@@ -104,7 +103,7 @@ class VQAv2Eval(Dataset):
     def __getitem__(self, index):
         ann = self.qa_pairs[index]
 
-        image = Image.open(self.image_root + "/" + ann["image"]).convert("RGB")
+        image = Image.open(self.image_root + "/" + Path(ann["image"]).name).convert("RGB")
         question = ann["question"]
 
         if self.img_transform:
@@ -115,7 +114,7 @@ class VQAv2Eval(Dataset):
 
         return {
             "image": image,
-            "text_input": question,
+            "text_input": self.prompt.format(question),
             "question_id": ann["question_id"],
         }
 

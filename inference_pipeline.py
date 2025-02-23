@@ -24,7 +24,7 @@ class InferencePipeline:
         else:
             raise ValueError(f"Unsupported task: {task}")
 
-    def _run_image_captioning(self, dataset, max_samples=None):
+    def _run_image_captioning(self, dataset, max_samples=None, processor_kwargs={}, generate_kwargs={}):
         results = []
         references = []
         
@@ -32,9 +32,9 @@ class InferencePipeline:
             image = dataset[i][0]
             captions = dataset[i][1]
             img_id = dataset.ids[i]
-            inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+            inputs = self.processor(images=image, return_tensors="pt", **processor_kwargs).to(self.device)
             with torch.no_grad():
-                out = self.model.generate(**inputs)
+                out = self.model.generate(**inputs, **generate_kwargs)
             
             caption = self.processor.decode(out[0], skip_special_tokens=True).strip()
             
@@ -46,7 +46,7 @@ class InferencePipeline:
             'references': references
         }
 
-    def _run_vqa(self, data, distributed=False, max_samples=None):
+    def _run_vqa(self, data, distributed=False, max_samples=None, processor_kwargs = {}, generate_kwargs={}):
         results = []
 
         if isinstance(data, Dataset):
@@ -65,10 +65,10 @@ class InferencePipeline:
             questions = samples["text_input"]
             question_ids = samples["question_id"]
 
-            inputs = self.processor(images=images, text=questions, padding="longest", return_tensors="pt").to(self.device)
+            inputs = self.processor(images=images, text=questions, return_tensors="pt", **processor_kwargs).to(self.device)
 
             with torch.no_grad():
-                out = self.model.generate(**inputs)
+                out = self.model.generate(**inputs, **generate_kwargs)
 
             answers = self.processor.batch_decode(out, skip_special_tokens=True)
             for answer, question_id in zip(answers, question_ids):
@@ -110,8 +110,15 @@ class InferencePipeline:
         itm_logit = itm_logit[:, :, 1].mean(dim=1).float()
         return itm_logit
 
-    def _run_retrieval(self, dataset, k_test=128, max_samples=None, text_bs=4):
+    def _run_retrieval(self, dataset, max_samples=None, k_test=128, text_bs=4, tokenizer_kwargs=None):
         with torch.no_grad():
+            if not tokenizer_kwargs:
+                tokenizer_kwargs = {
+                    "padding": "max_length",
+                    "truncation": True,
+                    "max_length": 35
+                }
+                
             tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", truncation_side="right")
             tokenizer.add_special_tokens({"bos_token": "[DEC]"})
 
@@ -127,10 +134,8 @@ class InferencePipeline:
                 text = texts[i : min(num_text, i + text_bs)]
                 text_input = tokenizer(
                     text,
-                    padding="max_length",
-                    truncation=True,
-                    max_length=35,
-                    return_tensors="pt"
+                    return_tensors="pt",
+                    **tokenizer_kwargs
                 ).to(self.model.device)
 
                 query_embeds = self.model.embeddings(text_input.input_ids)

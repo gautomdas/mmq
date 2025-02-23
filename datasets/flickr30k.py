@@ -4,13 +4,13 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset, DataLoader
 import json
+import re
 
 class Flickr30kEvalDataset(Dataset):
-    def __init__(self, image_root, ann_root, img_transform=None, txt_processor=None):
-        self.annotation = json.load(open(os.path.join(ann_root, "flickr30k_test.json")))
+    def __init__(self, ann_file, img_dir, img_transform=None):
+        self.annotation = json.load(open(ann_file))
         self.img_transform = img_transform
-        self.txt_processor = txt_processor 
-        self.image_root = image_root
+        self.image_root = img_dir
 
         self.text = []
         self.image = []
@@ -22,7 +22,7 @@ class Flickr30kEvalDataset(Dataset):
             self.image.append(ann["image"])
             self.img2txt[img_id] = []
             for i, caption in enumerate(ann["caption"]):
-                self.text.append(self.txt_processor(caption) if self.text_processor else caption)
+                self.text.append(self._process_caption(caption))
                 self.img2txt[img_id].append(txt_id)
                 self.txt2img[txt_id] = img_id
                 txt_id += 1
@@ -33,7 +33,30 @@ class Flickr30kEvalDataset(Dataset):
     def __getitem__(self, index):
         image_path = os.path.join(self.image_root, self.annotation[index]["image"].split("/")[-1])
         image = Image.open(image_path).convert("RGB")
-
-        image = self.img_transform(image) if self.img_transform else image
+        if (self.img_transform):
+            image = self.img_transform(image)
 
         return {"image": image, "index": index}
+
+    def _process_caption(self, caption):
+        max_words = 50
+    
+        caption = re.sub(
+            r"([.!\"()*#:;~])",
+            " ",
+            caption.lower(),
+        )
+        caption = re.sub(
+            r"\s{2,}",
+            " ",
+            caption,
+        )
+        caption = caption.rstrip("\n")
+        caption = caption.strip(" ")
+    
+        # truncate caption
+        caption_words = caption.split(" ")
+        if len(caption_words) > max_words:
+            caption = " ".join(caption_words[: max_words])
+    
+        return caption
