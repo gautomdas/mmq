@@ -95,6 +95,7 @@ class BaseAWQQuantizer():
         for layer_group, modules in layer_groups.items():
             self.inps = first_inputs[layer_group]
 
+            # quantize layer-by-layer
             for i in tqdm(range(len(modules)), desc= f"Quantizing {layer_group}"):
                 
                 layer = modules[i]
@@ -105,6 +106,7 @@ class BaseAWQQuantizer():
                 # two dicts with the same keys, mapping module name to nn.linear and module name to bit_width
                 named_linears, w_bits_dict = self._filter_named_linears(named_linears, layer_group)
                 # gather inputs to each nn.Linear via pytorch hooks
+                # NOTE: also setting self.inps for next iteration
                 linear_inputs = self._gather_linear_inputs(layer, named_linears, layer_group)
 
                 # group weights together as appropriate for model type
@@ -134,6 +136,10 @@ class BaseAWQQuantizer():
                     module.weight.data, scales, zeros = self.pseudo_quantize_tensor(
                         module.weight.data, w_bits_dict[name]
                     )
+
+                # TODO: remove
+                # print('FIN!')
+                # return grouped_mods, first_inputs, self.layer_args, self.layer_kwargs, linear_inputs
 
 
 

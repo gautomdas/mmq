@@ -11,3 +11,4 @@ slurm_files/2_quantization_run_smaller_bits/
 **/__pycache__
 
 awq/**/
+.vscode/
