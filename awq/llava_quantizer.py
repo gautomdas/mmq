@@ -10,7 +10,7 @@ class LlavaAWQQuantizer(BaseAWQQuantizer):
         super().__init__(model, device, inputs_processor, dataset, config)
         self.group2modules = self._get_group2modules()
         # TODO: change, testing for now
-        self.n_samples = 2
+        self.n_samples = 128
         self.dataset_name = dataset_name
 
         # keep track of excluded modules for model size computation
@@ -223,8 +223,6 @@ class LlavaAWQQuantizer(BaseAWQQuantizer):
         return grouped_mods
 
     
-    # TODO: _run_model() setup with AutoProcessor
-
 
     # NOTE: assuming VQAv2 dataset for now
     def _get_calibration_set(self):

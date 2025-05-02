@@ -92,13 +92,18 @@ class BaseAWQQuantizer():
         # Run calibration set through model
         first_inputs, self.layer_args, self.layer_kwargs = self._gather_first_inputs(layer_groups, calibration_set)
 
+        self.model = self.model.to('cpu')
         for layer_group, modules in layer_groups.items():
             self.inps = first_inputs[layer_group]
 
             # quantize layer-by-layer
             for i in tqdm(range(len(modules)), desc= f"Quantizing {layer_group}"):
                 
+                # move layer inputs to gpu
+                self.inps = self.inps.to(self.device)
+                
                 layer = modules[i]
+                # move layer to gpu
                 layer = layer.to(self.device)
 
                 # nn.linear modules within layer to quantize
@@ -133,13 +138,18 @@ class BaseAWQQuantizer():
                 for name, module in named_linears.items():
                     # module = module.to(device).half()
                     module = module.to(self.device)
-                    module.weight.data, scales, zeros = self.pseudo_quantize_tensor(
+                    module.weight.data, scales, _ = self.pseudo_quantize_tensor(
                         module.weight.data, w_bits_dict[name]
                     )
+                    module = module.to('cpu')
+                    clear_memory(module)
+                    scales = scales.to('cpu')
+                    clear_memory(scales)
+                
+                layer = layer.to('cpu')
+                clear_memory(layer)
 
-                # TODO: remove
-                # print('FIN!')
-                # return grouped_mods, first_inputs, self.layer_args, self.layer_kwargs, linear_inputs
+            modules = modules.to('cpu')
 
 
 
@@ -171,7 +181,7 @@ class BaseAWQQuantizer():
                     first_key = list(kwargs.keys())[0]
                     hidden_states = kwargs.pop(first_key)
 
-                first_inputs[self.layer_group] = hidden_states
+                first_inputs[self.layer_group] = hidden_states.to('cpu')
 
                 # preserve rest of positional arguments
                 layer_args[self.layer_group] = args[1:]
@@ -238,7 +248,7 @@ class BaseAWQQuantizer():
 
         # compute next set of inputs, grabbing linear inputs through the hooks
         self.inps = layer(self.inps, *self.layer_args[layer_group], **self.layer_kwargs[layer_group])
-        self.inps = self.inps[0]
+        self.inps = self.inps[0].to('cpu')
 
         # remove hooks from model
         for hook in hooks:
