@@ -72,17 +72,14 @@ class ScoringPipeline:
         answers = results["answers"]
         annotations = results["annotations"]
         questions = results["questions"]
-        vqa = VQA()
-        vqa.dataset = annotations
-        vqa.questions = questions
-        vqa.createIndex()
-        vqa_result = vqa.loadRes(answers, questions)
-        vqa_scorer = VQAEval(vqa, vqa_result, n=2)
-        vqa_scorer.evaluate()
+        vqa = VQA(annotations, questions)
 
-        metrics = {
-            "agg_metrics": vqa_scorer.accuracy["overall"]
-        }
+        quesIds = [ans["question_id"] for ans in answers]
+        vqa_result = vqa.loadRes(answers, quesFile=questions)
+        vqa_scorer = VQAEval(vqa, vqa_result, n=2)
+        vqa_scorer.evaluate(quesIds=quesIds)
+
+        metrics = {"agg_metrics": vqa_scorer.accuracy["overall"]}
 
         for ans_type in vqa_scorer.accuracy["perAnswerType"]:
             metrics[ans_type] = vqa_scorer.accuracy["perAnswerType"][ans_type]

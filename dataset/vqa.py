@@ -40,16 +40,10 @@ class VQAv2Eval(Dataset):
         self.qa_pairs = self.qa_pairs[:max_samples]
         question_ids = set([qa["question_id"] for qa in self.qa_pairs])
 
-        self.annotations = list(
-            filter(lambda anno: anno["question_id"] in question_ids, self.annotations)
-        )
+        self.annotations = [anno for anno in self.annotations if anno["question_id"] in question_ids]
         self.annotation_dict["annotations"] = self.annotations
 
-        self.questions = list(
-            filter(
-                lambda question: question["question_id"] in question_ids, self.questions
-            )
-        )
+        self.questions = [question for question in self.questions if question["question_id"] in question_ids]
         self.question_dict["questions"] = self.questions
 
     def collater(self, samples):
@@ -70,17 +64,10 @@ class VQAv2Eval(Dataset):
 
     def _create_qa_pairs(self):
         # image_id -> path map
-        image_to_path = [
-            entry.name for entry in os.scandir(self.image_root) if entry.is_file()
-        ]
-        image_to_path = {
-            int(re.search(r"_(\d+)\.jpg$", path).group(1)): path
-            for path in image_to_path
-        }
+        image_to_path = [entry.name for entry in os.scandir(self.image_root) if entry.is_file()]
+        image_to_path = {int(re.search(r"_(\d+)\.jpg$", path).group(1)): path for path in image_to_path}
 
-        question_to_annotation = {
-            int(anno["question_id"]): anno for anno in self.annotations
-        }
+        question_to_annotation = {int(anno["question_id"]): anno for anno in self.annotations}
 
         for question in self.questions:
             image_id = question["image_id"]
@@ -90,9 +77,7 @@ class VQAv2Eval(Dataset):
                 {
                     "question_id": question_id,
                     "question": question["question"],
-                    "answer": [
-                        answer_dict["answer"] for answer_dict in annotation["answers"]
-                    ],
+                    "answer": [answer_dict["answer"] for answer_dict in annotation["answers"]],
                     "image": image_to_path[image_id],
                 }
             )

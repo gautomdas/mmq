@@ -47,8 +47,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    processor = Blip2Processor.from_pretrained("Salesforce/blip2-flan-t5-xl")
-    processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    processor = Blip2Processor.from_pretrained("salesforce/blip2-opt-2.7b", padding_side="left")
     vqav2 = VQAv2Eval(
         "./data/vqav2/val2014",
         "./data/vqav2/annotations",
@@ -75,14 +74,17 @@ if __name__ == "__main__":
             sampler=sampler,
             collate_fn=vqav2.collater,
         )
-        model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-flan-t5-xl", device_map=gpu, torch_dtype=torch.bfloat16)
+        model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b", device_map=gpu)
 
         inferencer = InferencePipeline(model, gpu, processor)
         scorer = ScoringPipeline()
 
-        processor_kwargs={"padding": True, }
-        generate_kwargs={"num_beams": 5, "max_length": 10, "min_length": 1, "length_penalty": -1, "do_sample": False}
-        print(generate_kwargs)
+        # T5 kwargs 
+        # processor_kwargs={"padding": "longest", "max_length": 32, "truncation": True}
+        # generate_kwargs={"num_beams": 5, "max_new_tokens": 10, "min_length": 1, "length_penalty": -1, "do_sample": False}
+        # OPT kwargs
+        processor_kwargs={"padding": "longest", "max_length": 32, "truncation": True}
+        generate_kwargs={"num_beams": 5, "max_new_tokens": 10, "min_length": 1, "length_penalty": 0, "do_sample": False}
 
         results = inferencer.run_inference(
             dataloader, 
@@ -91,20 +93,20 @@ if __name__ == "__main__":
             generate_kwargs=generate_kwargs
         )
 
-        with open(os.path.join(args.output_dir, "%d_results.json" % rank), 'w') as f:
+        with open(os.path.join(args.output_dir, f"{rank}_results.json"), 'w') as f:
             json.dump(results["answers"], f)
         dist.barrier()
 
         if rank == 0:
             results = {
                 "answers": [],
-                "annotations": vqav2.annotation_dict,
-                "questions": vqav2.question_dict
+                "annotations": "./data/vqav2/annotations/v2_mscoco_val2014_annotations.json",
+                "questions": "./data/vqav2/questions/v2_OpenEnded_mscoco_val2014_questions.json"
             }
 
             question_ids = set()
             for rank_id in range(world_size):
-                with open(os.path.join(args.output_dir, "%d_results.json" % rank_id), 'r') as f:
+                with open(os.path.join(args.output_dir, f"{rank_id}_results.json"), 'r') as f:
                     rank_results = json.load(f)
                     for answer in rank_results:
                         question_id = answer["question_id"] 
@@ -116,16 +118,39 @@ if __name__ == "__main__":
     
         dist.destroy_process_group()
     else:
-        model = Blip2ForConditionalGeneration.from_pretrained(
-            "Salesforce/blip2-flan-t5-xl", load_in_8bit=True, torch_dtype=torch.float16
-        )
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b", device_map=device)
 
         inferencer = InferencePipeline(model, device, processor)
         scorer = ScoringPipeline()
 
-        results = inferencer.run_inference(
-            vqav2, task="visual_question_answering"
+        # T5 kwargs 
+        # processor_kwargs={"padding": "longest", "max_length": 32, "truncation": True}
+        # generate_kwargs={"num_beams": 5, "max_new_tokens": 10, "min_length": 1, "length_penalty": -1, "do_sample": False}
+        # OPT kwargs
+        processor_kwargs={"padding": "longest", "max_length": 32, "truncation": True}
+        generate_kwargs={"num_beams": 5, "max_new_tokens": 10, "min_length": 1, "length_penalty": 0, "do_sample": False}
+
+        dataloader = DataLoader(
+            vqav2,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=False,
+            shuffle=False,
+            collate_fn=vqav2.collater,
         )
 
+        results = inferencer.run_inference(
+            dataloader,
+            task="visual_question_answering",
+            proecssor_kwargs=processor_kwargs,
+            generate_kwargs=generate_kwargs
+        ) 
+
+        with open(os.path.join(args.output_dir, "answers.json"), 'w') as f:
+            json.dump(results["answers"], f)
+
         compute_vqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
+
+

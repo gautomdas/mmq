@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 import json
-from transformers import BertTokenizer, AutoProcessor
+from transformers import BertTokenizer, AutoProcessor, OPTForCausalLM 
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import torch.distributed as dist
@@ -71,8 +71,10 @@ class InferencePipeline:
                 out = self.model.generate(**inputs, **generate_kwargs)
 
             answers = self.processor.batch_decode(out, skip_special_tokens=True)
-            for answer, question_id in zip(answers, question_ids):
-                results.append({"question_id": question_id, "answer": answer})
+            for answer, question, question_id in zip(answers, questions, question_ids):
+                if isinstance(self.model.language_model, OPTForCausalLM):
+                    answer = answer[len(question):]
+                results.append({"question_id": question_id, "answer": answer.strip()})
             
         return {
             "answers": results,
