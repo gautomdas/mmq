@@ -8,7 +8,7 @@ import torch.distributed as dist
 from torch.utils.data import DistributedSampler, DataLoader
 from transformers import Blip2ForConditionalGeneration, Blip2Processor 
 
-from datasets import VQAv2Eval
+from dataset import GQAEval
 from inference_pipeline import InferencePipeline
 from scoring_pipeline import ScoringPipeline
 
@@ -27,32 +27,31 @@ def init_distributed():
 
     return rank, world_size, gpu
 
-def compute_vqa_results(results, scorer, save_path=None):
-    vqa_results = scorer.compute_scores(results, "vqav2")
-    print(vqa_results)
+def compute_gqa_results(results, scorer, save_path=None):
+    gqa_results = scorer.compute_scores(results, "gqa")
+    print(gqa_results)
     if save_path:
         with open(save_path, "w") as f:
-            json.dump(vqa_results, f)
+            json.dump(gqa_results, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        prog='VQAv2 Eval',
-        description='Performs VQA evaluation using BLIP2 on VQAv2',
+        prog='GQA Balanced-Testdev Eval',
+        description='Performs VQA evaluation using BLIP2 on GQA',
     )
 
     parser.add_argument("--distributed", action="store_true")
     parser.add_argument("--batch_size", default=64, type=int)
     parser.add_argument("--num_workers", default=1, type=int)
     parser.add_argument("--output_dir", default="./output", type=str)
-    parser.add_argument("--dataset_dir", default="./data/vqav2", type=str)
+    parser.add_argument("--dataset_dir", default="./data/gqa", type=str)
 
     args = parser.parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
     processor = Blip2Processor.from_pretrained("salesforce/blip2-opt-2.7b", padding_side="left")
-    vqav2 = VQAv2Eval(
-        os.path.join(args.dataset_dir, "val2014"),
-        os.path.join(args.dataset_dir, "annotations"),
+    gqa = GQAEval(
+        os.path.join(args.dataset_dir, "images"),
         os.path.join(args.dataset_dir, "questions"),
     )
 
@@ -62,20 +61,20 @@ if __name__ == "__main__":
 
         try:
             sampler = DistributedSampler(
-                vqav2,
+                gqa,
                 shuffle=False,
                 num_replicas=world_size,
                 rank=rank
             )
             
             dataloader = DataLoader(
-                vqav2, 
+                gqa, 
                 batch_size=args.batch_size, 
                 num_workers=args.num_workers, 
                 pin_memory=False,
                 shuffle=False,
                 sampler=sampler,
-                collate_fn=vqav2.collater,
+                collate_fn=gqa.collater,
             )
             model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b", device_map=gpu)
     
@@ -91,7 +90,7 @@ if __name__ == "__main__":
     
             results = inferencer.run_inference(
                 dataloader, 
-                task="vqav2",
+                task="gqa",
                 processor_kwargs=processor_kwargs,
                 generate_kwargs=generate_kwargs
             )
@@ -101,11 +100,7 @@ if __name__ == "__main__":
             dist.barrier()
     
             if rank == 0:
-                results = {
-                    "answers": [],
-                    "annotations": os.path.join(args.dataset_dir, "annotations/v2_mscoco_val2014_annotations.json"),
-                    "questions": os.path.join(args.dataset_dir, "questions/v2_OpenEnded_mscoco_val2014_questions.json")
-                }
+                results = []
     
                 question_ids = set()
                 for rank_id in range(world_size):
@@ -114,10 +109,10 @@ if __name__ == "__main__":
                         for answer in rank_results:
                             question_id = answer["question_id"] 
                             if question_id not in question_ids:
-                                results["answers"].append(answer)
+                                results.append(answer)
                                 question_ids.add(question_id)
         
-                compute_vqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
+                compute_gqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
         finally:
             dist.destroy_process_group()
     else:
@@ -129,34 +124,31 @@ if __name__ == "__main__":
         scorer = ScoringPipeline()
 
         # T5 kwargs 
-        # processor_kwargs={"padding": "longest", "max_length": 32, "truncation": True}
-        # generate_kwargs={"num_beams": 5, "max_new_tokens": 10, "min_length": 1, "length_penalty": -1, "do_sample": False}
+        #processor_kwargs={"padding": "longest", "max_length": 32, "truncation": True}
+        #generate_kwargs={"num_beams": 5, "max_new_tokens": 10, "min_length": 1, "length_penalty": -1, "do_sample": False}
         # OPT kwargs
         processor_kwargs={"padding": "longest", "max_length": 32, "truncation": True}
         generate_kwargs={"num_beams": 5, "max_new_tokens": 10, "min_length": 1, "length_penalty": 0, "do_sample": False}
 
         dataloader = DataLoader(
-            vqav2,
+            gqa,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             pin_memory=False,
             shuffle=False,
-            collate_fn=vqav2.collater,
+            collate_fn=gqa.collater,
         )
 
         results = inferencer.run_inference(
             dataloader,
-            task="visual_question_answering",
-            proecssor_kwargs=processor_kwargs,
+            task="gqa",
+            processor_kwargs=processor_kwargs,
             generate_kwargs=generate_kwargs
         ) 
 
         with open(os.path.join(args.output_dir, "answers.json"), 'w') as f:
             json.dump(results, f)
 
-        results["annotations"] = "./data/vqav2/annotations/v2_mscoco_val2014_annotations.json"
-        results["questions"] = "./data/vqav2/questions/v2_OpenEnded_mscoco_val2014_questions.json"
-        
-        compute_vqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
+        compute_gqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
 
 

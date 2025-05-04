@@ -19,8 +19,10 @@ class InferencePipeline:
             return self._run_image_captioning(dataset, **kwargs) 
         elif task == 'image_text_retrieval':
             return self._run_retrieval(dataset, **kwargs)
-        elif task == "visual_question_answering":
+        elif task == "vqav2":
             return self._run_vqa(dataset, **kwargs) 
+        elif task == "gqa":
+            return self._run_gqa(dataset, **kwargs)
         else:
             raise ValueError(f"Unsupported task: {task}")
 
@@ -46,13 +48,11 @@ class InferencePipeline:
             'references': references
         }
 
-    def _run_vqa(self, data, distributed=False, max_samples=None, processor_kwargs = {}, generate_kwargs={}):
-        results = []
-
-        if isinstance(data, Dataset):
-            if max_samples:
-                data.set_max_samples(max_samples)
-
+    def _prepare_data(self, data, max_samples=None):
+        if max_samples is not None:
+            data.set_max_samples(max_samples)
+                                 
+        if isinstance(data, torch.utils.data.Dataset):
             data = DataLoader(
                 data,
                 batch_size=1,
@@ -60,27 +60,59 @@ class InferencePipeline:
                 collate_fn=data.collater
             )
 
+        return data
+    
+    def _predict_answers(self, images, questions, processor_kwargs=None, generate_kwargs=None):
+        processor_kwargs = processor_kwargs or {}
+        generate_kwargs = generate_kwargs or {}
+        inputs = self.processor(images=images, text=questions, return_tensors="pt", **processor_kwargs).to(self.device)
+
+        with torch.no_grad():
+            out = self.model.generate(**inputs, **generate_kwargs)
+
+        answers = self.processor.batch_decode(out, skip_special_tokens=True)
+        return answers
+
+    def _run_gqa(self, data, distributed=False, max_samples=None, processor_kwargs=None, generate_kwargs=None):
+        processor_kwargs = processor_kwargs or {}
+        generate_kwargs = generate_kwargs or {}
+        results = []
+        data = self._prepare_data(data, max_samples=max_samples)
+
+        for samples in tqdm(data):
+            question_ids = samples["question_id"]
+            images = samples["image"]
+            questions = samples["text_input"]
+            gt_answers = samples["gt_answer"]
+
+            answers = self._predict_answers(images, questions, processor_kwargs, generate_kwargs)
+
+            for question_id, question, answer, gt_answer in zip(question_ids, questions, answers, gt_answers):
+                if answer.startswith(question):
+                    answer = answer[len(question):]
+                results.append({"question_id": question_id, "answer": answer.strip(), "gt_answer": gt_answer})
+
+        return results
+
+    def _run_vqav2(self, data, distributed=False, max_samples=None, processor_kwargs=None, generate_kwargs=None):
+        processor_kwargs = processor_kwargs or {}
+        generate_kwargs = generate_kwargs or {}
+        results = []
+        data = self._prepare_data(data, max_samples=max_samples)
+
         for samples in tqdm(data):
             images = samples["image"]
             questions = samples["text_input"]
             question_ids = samples["question_id"]
-
-            inputs = self.processor(images=images, text=questions, return_tensors="pt", **processor_kwargs).to(self.device)
-
-            with torch.no_grad():
-                out = self.model.generate(**inputs, **generate_kwargs)
-
-            answers = self.processor.batch_decode(out, skip_special_tokens=True)
+    
+            answers = self._predict_answers(images, questions, processor_kwargs, generate_kwargs)
+    
             for answer, question, question_id in zip(answers, questions, question_ids):
-                if isinstance(self.model.language_model, OPTForCausalLM):
+                if answer.startswith(question):
                     answer = answer[len(question):]
                 results.append({"question_id": question_id, "answer": answer.strip()})
-            
-        return {
-            "answers": results,
-            "annotations": data.dataset.annotation_dict,
-            "questions": data.dataset.question_dict
-        }
+
+        return results
 
     def _compute_itm(self, image_inputs, text_ids, text_atts):
         image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(image_inputs.device)
