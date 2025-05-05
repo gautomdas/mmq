@@ -146,7 +146,7 @@ if __name__ == "__main__":
 
         results = inferencer.run_inference(
             dataloader,
-            task="visual_question_answering",
+            task="vqav2",
             proecssor_kwargs=processor_kwargs,
             generate_kwargs=generate_kwargs
         ) 
@@ -154,8 +154,9 @@ if __name__ == "__main__":
         with open(os.path.join(args.output_dir, "answers.json"), 'w') as f:
             json.dump(results, f)
 
-        results["annotations"] = "./data/vqav2/annotations/v2_mscoco_val2014_annotations.json"
-        results["questions"] = "./data/vqav2/questions/v2_OpenEnded_mscoco_val2014_questions.json"
+        #results["annotations"] = "./data/vqav2/annotations/v2_mscoco_val2014_annotations.json"
+        results["annotations"] = os.path.join(args.dataset_dir, "annotations/v2_mscoco_val2014_annotations.json")
+        results["questions"] = os.path.join(args.dataset_dir, "questions/v2_OpenEnded_mscoco_val2014_questions.json")
         
         compute_vqa_results(results, scorer, os.path.join(args.output_dir, "results.json"))
 
