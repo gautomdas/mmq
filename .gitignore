@@ -12,3 +12,7 @@ slurm_files/2_quantization_run_smaller_bits/
 
 awq/**/
 .vscode/
+
+llava_runs/gpa_gptq_output/
+llava_runs/vqav2_gptq_output/
+llava_runs/vqav2_gptq_redo_timeouts/

@@ -87,18 +87,27 @@ class BaseAWQQuantizer():
 
         layer_groups = self._get_model_layer_groups()
         self._add_mods_to_model_size(self.excluded_mods)
+
+        print(f'Calibration set size: {self.n_samples}')
         calibration_set = self._get_calibration_set()
 
         # Run calibration set through model
         first_inputs, self.layer_args, self.layer_kwargs = self._gather_first_inputs(layer_groups, calibration_set)
 
-        self.model = self.model.to('cpu')
+        del calibration_set
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
+        self.model.to('cpu')
         for layer_group, modules in layer_groups.items():
             self.inps = first_inputs[layer_group]
 
             # quantize layer-by-layer
             for i in tqdm(range(len(modules)), desc= f"Quantizing {layer_group}"):
                 
+                pass
+
                 # move layer inputs to gpu
                 self.inps = self.inps.to(self.device)
                 
@@ -129,6 +138,9 @@ class BaseAWQQuantizer():
                     assert torch.all(scale)
                     self._apply_scales(scale, group['prev_op'], group['modules'], layer)
 
+                    scale = scale.to('cpu')
+                    clear_memory(scale)
+
 
                 # solve for and apply clipping
                 clips = self._search_best_clip(named_linears, linear_inputs, w_bits_dict)
@@ -149,7 +161,14 @@ class BaseAWQQuantizer():
                 layer = layer.to('cpu')
                 clear_memory(layer)
 
-            modules = modules.to('cpu')
+                self.model.to('cpu')
+                gc.collect()
+                torch.cuda.empty_cache()
+                pass
+        
+            
+            clear_memory(first_inputs[layer_group])
+
 
 
 
@@ -217,6 +236,12 @@ class BaseAWQQuantizer():
         if type(calibration_set) == torch.tensor:
             calibration_set = calibration_set.cpu()
             clear_memory(calibration_set)
+        else:
+            for key in calibration_set.keys():
+                calibration_set[key] = calibration_set[key].to('cpu')
+                clear_memory(calibration_set[key])
+        
+        del calibration_set
 
         for _, modules in layer_groups.items():
             # restore proper module at beginning of layer group
@@ -247,8 +272,13 @@ class BaseAWQQuantizer():
             )
 
         # compute next set of inputs, grabbing linear inputs through the hooks
-        self.inps = layer(self.inps, *self.layer_args[layer_group], **self.layer_kwargs[layer_group])
-        self.inps = self.inps[0].to('cpu')
+        # self.inps = layer(self.inps, *self.layer_args[layer_group], **self.layer_kwargs[layer_group])
+        out = layer(self.inps, *self.layer_args[layer_group], **self.layer_kwargs[layer_group])[0].to('cpu')
+        self.inps = self.inps.to('cpu')
+        clear_memory(self.inps)
+
+        # self.inps = self.inps[0].to('cpu')
+        self.inps = out
 
         # remove hooks from model
         for hook in hooks:
@@ -282,7 +312,7 @@ class BaseAWQQuantizer():
         clear_memory(W)
 
         # per channel mean of input (activation)
-        X_mean = inp.abs().view(-1, inp.shape[-1]).mean(0)
+        X_mean = inp.cpu().abs().view(-1, inp.shape[-1]).mean(0)
         X_mean = X_mean.view(-1)
 
         kwargs = sanitize_kwargs(layer_kwargs, parent_module)
@@ -353,6 +383,16 @@ class BaseAWQQuantizer():
 
         assert best_ratio != -1, "best scales ratio never set"
         assert torch.isnan(best_scales).sum() == 0, best_scales
+
+        # NOTE: trying this to save memory...
+        inp = inp.to('cpu')
+        clear_memory(inp)
+        fp_output = fp_output.to('cpu')
+        clear_memory(fp_output)
+        q_output = q_output.to('cpu')
+        clear_memory(q_output)
+        scales_view = scales_view.to('cpu')
+        clear_memory(scales_view)
 
         return best_scales.detach().cpu()
     

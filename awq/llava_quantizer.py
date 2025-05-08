@@ -222,27 +222,27 @@ class LlavaAWQQuantizer(BaseAWQQuantizer):
 
         return grouped_mods
 
-    
 
     # NOTE: assuming VQAv2 dataset for now
     def _get_calibration_set(self):
         random.seed(self.seed)
         indices = random.sample(range(len(self.dataset)), self.n_samples)
         
-        if self.dataset_name == 'VQAv2':
-            imgs = []
-            prompts = []
-            for i in indices:
+        # if self.dataset_name == 'VQAv2':
+        imgs = []
+        prompts = []
+        for i in indices:
 
-                # short answer prompting according to: https://github.com/haotian-liu/LLaVA/blob/main/docs/Evaluation.md
-                prompt = 'USER: <image>\n' + self.dataset.qa_pairs[i]['question'] + '\nAnswer the question using a single word or phrase. ASSISTANT:'
-                prompts.append(prompt)
+            # short answer prompting according to: https://github.com/haotian-liu/LLaVA/blob/main/docs/Evaluation.md
+            # prompt = 'USER: <image>\n' + self.dataset.qa_pairs[i]['question'] + '\nAnswer the question using a single word or phrase. ASSISTANT:'
+            prompt = self.dataset[i]['text_input']
+            prompts.append(prompt)
 
-                imgs.append(self.dataset[i]['image'])
+            imgs.append(self.dataset[i]['image'])
 
         # apply inputs processor 
         samples = self.inputs_processor(images = imgs,
-                                        text=prompts,
+                                        text = prompts,
                                         return_tensors='pt',
                                         padding=True).to(self.model.device)
 
@@ -250,8 +250,8 @@ class LlavaAWQQuantizer(BaseAWQQuantizer):
         
 
     def _run_model(self, calibration_set):
-        out = self.model.generate(**calibration_set)
-        out.to('cpu')
+        out = self.model.generate(**calibration_set, use_cache=False)
+        out = out.to('cpu')
         clear_memory(out)
 
 
