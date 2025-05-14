@@ -140,6 +140,8 @@ def main():
                             q_root=q_root,
                             prompt = llava_prompt)
         
+        dataset.set_max_samples(21435)
+        
     elif args.task == 'gqa':
         # GQA dataset paths
         image_root = '/fs/cfar-projects/low-bit-vision/datasets/gqa/images'
@@ -152,19 +154,24 @@ def main():
         )
     
 
+    if args.vision_bits == 16 and args.language_bits == 16:
+        args.no_quant = True
+
     if not args.no_quant:
         # Update quantizer config with specified bit sizes
         config = {}
 
-        config['vision_layers'] = {
-            'self_attn': args.vision_bits,
-            'mlp': args.vision_bits
-        }
+        if args.vision_bits != 16:
+            config['vision_layers'] = {
+                'self_attn': args.vision_bits,
+                'mlp': args.vision_bits
+            }
 
-        config['llm_layers'] = {
-            'self_attn': args.vision_bits,
-            'mlp': args.vision_bits
-        }
+        if args.language_bits != 16:
+            config['llm_layers'] = {
+                'self_attn': args.language_bits,
+                'mlp': args.language_bits
+            }
 
         # Print configuration
         print("\nQuantization Configuration:")
@@ -173,17 +180,21 @@ def main():
         print(f"Calibration size: {args.calibration_size}")
         print(f"Device: {device}\n")
 
+        print(f'config: {config}')
+
 
         quantizer = LlavaAWQQuantizer(model, device, processor, dataset, config)
         quantizer.n_samples = args.calibration_size
+        quantizer.seed = args.seed
 
         # Quantize model
         quantizer.quantize()
-
+        print(model)
         model.to(device)
 
     # Evaluate on task
     gpu_name = torch.cuda.get_device_name()
+    print(gpu_name)
     
     # adjust batch sizes depending on available gpu memory
     if "A5000" in gpu_name.replace(" ", ""):
@@ -193,7 +204,6 @@ def main():
 
     print(f'Evaluating on task: {args.task}')
     print(f'batch_size: {args.batch_size}')
-    quantizer.prepare_for_inference()
 
     dataloader = DataLoader(dataset,
                             batch_size=args.batch_size,
@@ -202,7 +212,6 @@ def main():
                             shuffle=False,
                             collate_fn = dataset.collater)
     
-   
     inferencer = InferencePipeline(model, device, processor)
 
     # set this according to huggingface usage tips: https://huggingface.co/docs/transformers/en/model_doc/llava

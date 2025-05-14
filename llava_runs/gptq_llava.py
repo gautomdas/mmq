@@ -659,6 +659,8 @@ def main():
                             ann_root=ann_root,
                             q_root=q_root,
                             prompt = llava_prompt)
+
+        dataset.set_max_samples(21435)
         
     elif args.task == 'gqa':
         # GQA dataset paths
@@ -698,6 +700,7 @@ def main():
 
     # Evaluate on task
     gpu_name = torch.cuda.get_device_name()
+    print(gpu_name)
     
     # adjust batch sizes depending on available gpu memory
     if "A5000" in gpu_name.replace(" ", ""):

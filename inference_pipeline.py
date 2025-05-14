@@ -20,7 +20,7 @@ class InferencePipeline:
         elif task == 'image_text_retrieval':
             return self._run_retrieval(dataset, **kwargs)
         elif task == "vqav2":
-            return self._run_vqa(dataset, **kwargs) 
+            return self._run_vqav2(dataset, **kwargs) 
         elif task == "gqa":
             return self._run_gqa(dataset, **kwargs)
         else:

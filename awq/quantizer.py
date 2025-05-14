@@ -100,6 +100,8 @@ class BaseAWQQuantizer():
 
 
         self.model.to('cpu')
+
+        # print(first_inputs)
         for layer_group, modules in layer_groups.items():
             self.inps = first_inputs[layer_group]
 
