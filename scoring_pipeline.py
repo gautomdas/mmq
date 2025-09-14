@@ -6,6 +6,8 @@ from pycocoevalcap.meteor.meteor import Meteor
 from pycocoevalcap.rouge.rouge import Rouge
 from pycocoevalcap.cider.cider import Cider
 from pycocoevalcap.spice.spice import Spice
+from vqa_tools.vqa import VQA
+from vqa_tools.vqa_eval import VQAEval
 import os
 import sys
 
@@ -36,6 +38,10 @@ class ScoringPipeline:
     def compute_scores(self, results, task, **kwargs):
         if task == 'image_captioning':
             return self._compute_image_captioning_scores(results)
+        elif task == "vqav2":
+            return self._compute_vqa_scores(results)
+        elif task == "gqa":
+            return self._compute_gqa_scores(results)
         elif task == "image_text_retrieval":
             return self._compute_retrieval_scores(results, **kwargs)
         else:
@@ -63,6 +69,47 @@ class ScoringPipeline:
                 scores[f'{method}_per_caption'] = scores_per_caption
 
         return scores
+
+    def _compute_vqa_scores(self, results):
+        answers = results["answers"]
+        annotations = results["annotations"]
+        questions = results["questions"]
+        vqa = VQA(annotations, questions)
+
+        quesIds = [ans["question_id"] for ans in answers]
+        vqa_result = vqa.loadRes(answers, quesFile=questions)
+        vqa_scorer = VQAEval(vqa, vqa_result, n=2)
+        vqa_scorer.evaluate(quesIds=quesIds)
+
+        metrics = {"agg_metrics": vqa_scorer.accuracy["overall"]}
+
+        for ans_type in vqa_scorer.accuracy["perAnswerType"]:
+            metrics[ans_type] = vqa_scorer.accuracy["perAnswerType"][ans_type]
+
+        return metrics
+
+    def _compute_gqa_scores(self, results):
+        acc = []
+        vqa_tool = VQAEval()
+
+        for res in results:
+            gt_ans = res["gt_answer"]
+            pred_ans = res["answer"]
+
+            pred_ans = vqa_tool.processPunctuation(pred_ans)
+            pred_ans = vqa_tool.processDigitArticle(pred_ans)
+
+            gt_ans = vqa_tool.processPunctuation(gt_ans)
+            gt_ans = vqa_tool.processDigitArticle(gt_ans)
+
+            vqa_acc = 1 if pred_ans == gt_ans else 0
+
+            acc.append(vqa_acc)
+
+        accuracy = round((sum(acc) / len(acc) * 100), 2)
+        metrics = {"agg_metrics": accuracy, "acc": accuracy}
+        return metrics
+
 
     def _compute_retrieval_scores(self, results): 
         scores_i2t = results["scores_i2t"]

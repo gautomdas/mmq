@@ -39,8 +39,8 @@ def download_and_unzip(url, target_dir):
 
 
 def main():
-    target_dir = "./data/vqa2"
-    images = "http://images.cocodataset.org/zips/val2017.zip"
+    target_dir = "./data/vqav2"
+    images = "http://images.cocodataset.org/zips/val2014.zip"
     annotations = "https://s3.amazonaws.com/cvmlp/vqa/mscoco/vqa/v2_Annotations_Val_mscoco.zip"
     questions = "https://s3.amazonaws.com/cvmlp/vqa/mscoco/vqa/v2_Questions_Val_mscoco.zip"
 
