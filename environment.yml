@@ -1,4 +1,4 @@
-name: LAVIS
+name: mmq 
 channels:
   - pytorch
   - nvidia
@@ -183,4 +183,3 @@ dependencies:
   - zstd=1.5.5=hc292b87_2
   - pip:
       - huggingface-hub==0.24.0
-prefix: /home/gautom/anaconda3/envs/LAVIS

@@ -1,8 +1,9 @@
-import torch
-from torch import nn, Tensor
-from typing import List, Callable
 from enum import Enum, auto
-from quant_functions import uniform_quantization
+from typing import Callable, List
+
+import torch
+from torch import nn
+
 
 class ModelPart(Enum):
     VIT = auto()
@@ -20,13 +21,16 @@ class LayerType(Enum):
     ATTENTION = auto()
     BOTH = auto()
 
+
 class QuantConfig:
-    def __init__(self, 
-                 model_part: ModelPart,
-                 layer_group: LayerGroup,
-                 layer_type: LayerType,
-                 quant_function: Callable,
-                 num_bits: int):
+    def __init__(
+        self,
+        model_part: ModelPart,
+        layer_group: LayerGroup,
+        layer_type: LayerType,
+        quant_function: Callable,
+        num_bits: int,
+    ):
         self.model_part = model_part
         self.layer_group = layer_group
         self.layer_type = layer_type
@@ -74,44 +78,44 @@ class BlipQuantizer:
             return 0, total_layers
 
     def _quantize_mlp(self, layer: nn.Module, quant_function: Callable):
-        if hasattr(layer, 'mlp'):
+        if hasattr(layer, "mlp"):
             self._quantize_linear(layer.mlp.fc1, quant_function)
             self._quantize_linear(layer.mlp.fc2, quant_function)
-        elif hasattr(layer, 'fc1') and hasattr(layer, 'fc2'):
+        elif hasattr(layer, "fc1") and hasattr(layer, "fc2"):
             self._quantize_linear(layer.fc1, quant_function)
             self._quantize_linear(layer.fc2, quant_function)
 
     def _quantize_attention(self, layer: nn.Module, quant_function: Callable):
-        if hasattr(layer, 'self_attn'):
-            if hasattr(layer.self_attn, 'qkv'):
+        if hasattr(layer, "self_attn"):
+            if hasattr(layer.self_attn, "qkv"):
                 self._quantize_linear(layer.self_attn.qkv, quant_function)
-            if hasattr(layer.self_attn, 'projection'):
+            if hasattr(layer.self_attn, "projection"):
                 self._quantize_linear(layer.self_attn.projection, quant_function)
-        elif hasattr(layer, 'attention'):
-            if hasattr(layer.attention, 'attention'):
+        elif hasattr(layer, "attention"):
+            if hasattr(layer.attention, "attention"):
                 self._quantize_linear(layer.attention.attention.query, quant_function)
                 self._quantize_linear(layer.attention.attention.key, quant_function)
                 self._quantize_linear(layer.attention.attention.value, quant_function)
-            if hasattr(layer.attention, 'output'):
+            if hasattr(layer.attention, "output"):
                 self._quantize_linear(layer.attention.output.dense, quant_function)
-        elif hasattr(layer, 'k_proj'):
+        elif hasattr(layer, "k_proj"):
             self._quantize_linear(layer.k_proj, quant_function)
             self._quantize_linear(layer.v_proj, quant_function)
             self._quantize_linear(layer.q_proj, quant_function)
             self._quantize_linear(layer.out_proj, quant_function)
 
     def _quantize_linear(self, module: nn.Module, quant_function: Callable):
-        if hasattr(module, 'weight') and isinstance(module.weight, torch.Tensor):
+        if hasattr(module, "weight") and isinstance(module.weight, torch.Tensor):
             module.weight.data = quant_function(module.weight.data)
             module.quantized = True
             module.num_bits = self.num_bits
-        if hasattr(module, 'bias') and isinstance(module.bias, torch.Tensor):
+        if hasattr(module, "bias") and isinstance(module.bias, torch.Tensor):
             module.bias.data = quant_function(module.bias.data)
 
     def count_quantized_layers(self):
         count = 0
         for name, module in self.model.named_modules():
-            if hasattr(module, 'quantized') and module.quantized:
+            if hasattr(module, "quantized") and module.quantized:
                 count += 1
         return count
 
@@ -120,9 +124,9 @@ class BlipQuantizer:
 
     def print_model_structure(self, indent=0):
         for name, module in self.model.named_children():
-            print('  ' * indent + name + ': ' + module.__class__.__name__, end='')
-            if hasattr(module, 'quantized'):
-                print(f" (Quantized: {module.num_bits} bits)", end='')
+            print("  " * indent + name + ": " + module.__class__.__name__, end="")
+            if hasattr(module, "quantized"):
+                print(f" (Quantized: {module.num_bits} bits)", end="")
             print()
             if len(list(module.children())) > 0:
-                self.print_model_structure(indent + 1)  
+                self.print_model_structure(indent + 1)

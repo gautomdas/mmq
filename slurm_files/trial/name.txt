@@ -1,2 +1,0 @@
-./slurm_files/trial/0__./configs/16.json.log
-./slurm_files/trial/1__./configs/17.json.log

@@ -1,13 +1,15 @@
 import json
-import numpy as np
-from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
-from pycocoevalcap.bleu.bleu import Bleu
-from pycocoevalcap.meteor.meteor import Meteor
-from pycocoevalcap.rouge.rouge import Rouge
-from pycocoevalcap.cider.cider import Cider
-from pycocoevalcap.spice.spice import Spice
 import os
 import sys
+
+import numpy as np
+
+from pycocoevalcap.cider.cider import Cider
+from pycocoevalcap.meteor.meteor import Meteor
+from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+from vqa_tools.vqa import VQA
+from vqa_tools.vqa_eval import VQAEval
+
 
 class ScoringPipeline:
     def __init__(self):
@@ -24,47 +26,98 @@ class ScoringPipeline:
         #     (Cider(), "CIDEr"),
         #     (Spice(), "SPICE")
         # ]
-        self.scorers = [
-            (Meteor(), "METEOR"),
-            (Cider(), "CIDEr")
-        ]
+        self.scorers = [(Meteor(), "METEOR"), (Cider(), "CIDEr")]
 
     def load_results(self, filename):
-        with open(filename, 'r') as f:
+        with open(filename, "r") as f:
             return json.load(f)
 
     def compute_scores(self, results, task, **kwargs):
-        if task == 'image_captioning':
+        if "image_captioning" in task:
             return self._compute_image_captioning_scores(results)
-        elif task == "image_text_retrieval":
+        elif "image_text_retrieval" in task:
             return self._compute_retrieval_scores(results, **kwargs)
+        elif "vqav2" in task:
+            return self._compute_vqa_scores(results)
+        elif "gqa" in task:
+            return self._compute_gqa_scores(results)
         else:
             raise ValueError(f"Unsupported task: {task}")
 
     def _compute_image_captioning_scores(self, results):
-        gts = {i: [{'caption': c} for c in ref] for i, ref in enumerate(results['references'])}
-        res = {i: [{'caption': p['caption']}] for i, p in enumerate(results['predictions'])}
+        gts = {
+            i: [{"caption": c} for c in ref]
+            for i, ref in enumerate(results["references"])
+        }
+        res = {
+            i: [{"caption": p["caption"]}] for i, p in enumerate(results["predictions"])
+        }
 
-        print('Tokenizing...')
+        print("Tokenizing...")
         gts_tokenized = self.tokenizer.tokenize(gts)
         res_tokenized = self.tokenizer.tokenize(res)
 
         scores = {}
-        print('Computing scores...')
+        print("Computing scores...")
         for scorer, method in self.scorers:
-            print(f'Computing {method} score...')
-            score, scores_per_caption = scorer.compute_score(gts_tokenized, res_tokenized)
+            print(f"Computing {method} score...")
+            score, scores_per_caption = scorer.compute_score(
+                gts_tokenized, res_tokenized
+            )
             if isinstance(method, list):
                 for sc, scs, m in zip(score, scores_per_caption, method):
                     scores[m] = sc
-                    scores[f'{m}_per_caption'] = scs
+                    scores[f"{m}_per_caption"] = scs
             else:
                 scores[method] = score
-                scores[f'{method}_per_caption'] = scores_per_caption
+                if isinstance(scores_per_caption, list):
+                    scores[f"{method}_per_caption"] = scores_per_caption
+                else:
+                    scores[f"{method}_per_caption"] = scores_per_caption.tolist()
 
         return scores
 
-    def _compute_retrieval_scores(self, results): 
+    def _compute_vqa_scores(self, results):
+        answers = results["answers"]
+        annotations = results["annotations"]
+        questions = results["questions"]
+        vqa = VQA(annotations, questions)
+
+        quesIds = [ans["question_id"] for ans in answers]
+        vqa_result = vqa.loadRes(answers, quesFile=questions)
+        vqa_scorer = VQAEval(vqa, vqa_result, n=2)
+        vqa_scorer.evaluate(quesIds=quesIds)
+
+        metrics = {"agg_metrics": vqa_scorer.accuracy["overall"]}
+
+        for ans_type in vqa_scorer.accuracy["perAnswerType"]:
+            metrics[ans_type] = vqa_scorer.accuracy["perAnswerType"][ans_type]
+
+        return metrics
+
+    def _compute_gqa_scores(self, results):
+        acc = []
+        vqa_tool = VQAEval()
+
+        for res in results:
+            gt_ans = res["gt_answer"]
+            pred_ans = res["answer"]
+
+            pred_ans = vqa_tool.processPunctuation(pred_ans)
+            pred_ans = vqa_tool.processDigitArticle(pred_ans)
+
+            gt_ans = vqa_tool.processPunctuation(gt_ans)
+            gt_ans = vqa_tool.processDigitArticle(gt_ans)
+
+            vqa_acc = 1 if pred_ans == gt_ans else 0
+
+            acc.append(vqa_acc)
+
+        accuracy = round((sum(acc) / len(acc) * 100), 2)
+        metrics = {"agg_metrics": accuracy, "acc": accuracy}
+        return metrics
+
+    def _compute_retrieval_scores(self, results):
         scores_i2t = results["scores_i2t"]
         scores_t2i = results["scores_t2i"]
         txt2img = results["txt2img"]

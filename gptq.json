@@ -1,0 +1,26 @@
+{
+    "vision": {
+        "bits": 8,
+        "percent_dampening": 0.01,
+        "group_size": -1,
+        "use_symmetric": true,
+        "use_act_order": false,
+        "use_static_groups": false
+    },
+    "qformer": {
+        "bits": 8,
+        "percent_dampening": 0.01,
+        "group_size": -1,
+        "use_symmetric": true,
+        "use_act_order": false,
+        "use_static_groups": false
+    },
+    "language": {
+        "bits": 8,
+        "percent_dampening": 0.01,
+        "group_size": -1,
+        "use_symmetric": true,
+        "use_act_order": false,
+        "use_static_groups": false
+    }
+}

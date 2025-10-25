@@ -1,5 +1,4 @@
-data/coco/
-data/flickr30k/
+data/
 trash/
 .virtual_documents/
 dataset/__pycache__/
@@ -7,4 +6,13 @@ gptq_results/
 gptq_results_first_run/
 slurm_files/1_quantization_run/
 slurm_files/2_quantization_run_smaller_bits/
+
+**/*.pyc
+**/__pycache__
+**/*.ipynb_checkpoints
+
+awq/**/
+.vscode/
+
+llava_runs/**/
 
