@@ -1,17 +1,15 @@
 import math
 import time
-from typing import List, Dict, Any, Optional
-import argparse
-import random
-import os
-import json
+from typing import Union
 
 import torch
 import torch.nn as nn
-from tqdm import tqdm
-from transformers import Blip2Processor, Blip2ForConditionalGeneration
-from dataset import COCODataset
 import transformers
+from tqdm import tqdm
+from transformers import (Blip2ForConditionalGeneration,
+                          Blip2ForImageTextRetrieval)
+
+from utils import get_calibration_set
 
 DEBUG = False
 
@@ -353,39 +351,12 @@ def find_linear_layers_in_model(model):
 class BLIP2Quantizer:
     """Main class for quantizing BLIP2 model components with different precisions"""
 
-    def __init__(self, model, processor, device, chunk_size=32):
+    def __init__(self, model, processor, device, config, chunk_size=32):
         self.model = model
         self.processor = processor
         self.device = device
         self.chunk_size = chunk_size
-
-        # Component-specific configuration parameters
-        self.config = {
-            "vision": {
-                "bits": 8,
-                "percent_dampening": 0.01,
-                "group_size": -1,
-                "use_symmetric": True,
-                "use_act_order": False,
-                "use_static_groups": False,
-            },
-            "qformer": {
-                "bits": 6,
-                "percent_dampening": 0.01,
-                "group_size": -1,
-                "use_symmetric": True,
-                "use_act_order": False,
-                "use_static_groups": False,
-            },
-            "language": {
-                "bits": 4,
-                "percent_dampening": 0.01,
-                "group_size": -1,
-                "use_symmetric": True,
-                "use_act_order": False,
-                "use_static_groups": False,
-            },
-        }
+        self.config = config
 
     def _prepare_quantizers(self, layers, component_type):
         """Initialize GPTQ quantizers for given layers with component-specific settings"""
@@ -407,7 +378,7 @@ class BLIP2Quantizer:
         """Process a chunk of layers with component-specific quantization settings"""
         current_layers = dict(list(layers.items())[start_idx:end_idx])
         print(
-            f"\nProcessing {desc} layers {start_idx} to {end_idx-1} with {self.config[component_type]['bits']}-bit precision"
+            f"\nProcessing {desc} layers {start_idx} to {end_idx - 1} with {self.config[component_type]['bits']}-bit precision"
         )
 
         # Initialize quantizers for current chunk
@@ -448,7 +419,7 @@ class BLIP2Quantizer:
 
         torch.cuda.empty_cache()
 
-    def quantize_vision_model(self, calibration_images):
+    def quantize_vision_model(self, calibration_set):
         """Quantize vision model with 8-bit precision"""
         print(
             f"Quantizing Vision Model with {self.config['vision']['bits']}-bit precision..."
@@ -459,10 +430,17 @@ class BLIP2Quantizer:
         total_layers = len(layers)
 
         def forward_pass():
-            for image in tqdm(calibration_images, desc="Processing vision model batch"):
-                inputs = self.processor(images=image, return_tensors="pt").to(
-                    self.device
-                )
+            for i in tqdm(
+                range(len(calibration_set)),
+                # range(len(calibration_set["images"])),
+                desc="Processing vision model batch",
+            ):
+                inputs = self.processor(
+                    **calibration_set[i],
+                    # images=calibration_set["images"][i],
+                    # text=calibration_set["text_input"][i],
+                    return_tensors="pt",
+                ).to(self.device)
                 self.model.vision_model(pixel_values=inputs["pixel_values"])
 
         for start_idx in range(0, total_layers, self.chunk_size):
@@ -474,7 +452,7 @@ class BLIP2Quantizer:
         self.model.vision_model.cpu()
         print("Vision Model quantization complete.\n")
 
-    def quantize_qformer(self, calibration_images):
+    def quantize_qformer(self, calibration_set, task):
         """Quantize Q-Former with 6-bit precision"""
         print(
             f"Quantizing Q-Former with {self.config['qformer']['bits']}-bit precision..."
@@ -487,7 +465,44 @@ class BLIP2Quantizer:
         total_layers = len(layers)
 
         def forward_pass():
-            for image in tqdm(calibration_images, desc="Processing Q-Former batch"):
+            for i in tqdm(
+                range(len(calibration_set)),
+                desc="Processing Q-Former batch",
+                # range(len(calibration_set["images"])), desc="Processing Q-Former batch"
+            ):
+                inputs = self.processor(
+                    **calibration_set[i],
+                    # images=calibration_set["images"][i],
+                    # text=calibration_set["text_input"][i],
+                    return_tensors="pt",
+                ).to(self.device)
+
+                if task == "image_text_retrieval":
+                    self.model(**inputs, use_image_text_matching_head=True)
+                    return
+
+                image_embeds = self.model.vision_model(
+                    pixel_values=inputs["pixel_values"],
+                    return_dict=True,
+                    interpolate_pos_encoding=False,
+                ).last_hidden_state
+                image_embeds = image_embeds.to(self.device)
+                image_attention_mask = torch.ones(
+                    image_embeds.size()[:-1],
+                    dtype=torch.long,
+                    device=image_embeds.device,
+                ).to(self.device)
+
+                query_tokens = self.model.query_tokens.expand(
+                    image_embeds.shape[0], -1, -1
+                ).to(self.device)
+                self.model.qformer(
+                    query_embeds=query_tokens,
+                    encoder_hidden_states=image_embeds,
+                    encoder_attention_mask=image_attention_mask,
+                    return_dict=True,
+                )
+                """
                 inputs = self.processor(images=image, return_tensors="pt").to(
                     self.device
                 )
@@ -501,6 +516,7 @@ class BLIP2Quantizer:
                     query_embeds=expanded_query_tokens,
                     encoder_hidden_states=image_embeds,
                 )
+                """
 
         for start_idx in range(0, total_layers, self.chunk_size):
             end_idx = min(start_idx + self.chunk_size, total_layers)
@@ -513,7 +529,7 @@ class BLIP2Quantizer:
         self.model.query_tokens = self.model.query_tokens.cpu()
         print("Q-Former quantization complete.\n")
 
-    def quantize_language_model(self, calibration_images):
+    def quantize_language_model(self, calibration_set):
         """Quantize language model with 4-bit precision"""
         print(
             f"Quantizing Language Model with {self.config['language']['bits']}-bit precision..."
@@ -525,12 +541,18 @@ class BLIP2Quantizer:
         total_layers = len(layers)
 
         def forward_pass():
-            for image in tqdm(
-                calibration_images, desc="Processing language model batch"
+            for i in tqdm(
+                range(len(calibration_set)),
+                # range(len(calibration_set["images"])),
+                desc="Processing language model batch",
             ):
-                inputs = self.processor(images=image, return_tensors="pt").to(
-                    self.device
-                )
+                inputs = self.processor(
+                    **calibration_set[i],
+                    return_tensors="pt",
+                ).to(self.device)
+
+                self.model.generate(**inputs)
+                """
                 vision_outputs = self.model.vision_model(
                     pixel_values=inputs["pixel_values"]
                 )
@@ -554,6 +576,7 @@ class BLIP2Quantizer:
                 self.model.language_model(
                     inputs_embeds=language_model_inputs, attention_mask=attention_mask
                 )
+                """
 
         for start_idx in range(0, total_layers, self.chunk_size):
             end_idx = min(start_idx + self.chunk_size, total_layers)
@@ -564,16 +587,23 @@ class BLIP2Quantizer:
         self.model.cpu()
         print("Language Model quantization complete.\n")
 
-    def quantize(self, calibration_images):
+    def quantize(self, dataset, task):
         """Quantize all BLIP2 components"""
         print("Starting BLIP2 model quantization...")
-        self.quantize_vision_model(calibration_images)
-        self.quantize_qformer(calibration_images)
-        self.quantize_language_model(calibration_images)
+        calibration_set = get_calibration_set(dataset)
+
+        self.quantize_vision_model(calibration_set)
+        self.quantize_qformer(calibration_set, task)
+        if task != "image_text_retrieval":
+            self.quantize_language_model(calibration_set)
+
         print("BLIP2 model quantization complete.")
 
+    @staticmethod
     def prepare_for_inference(
-        model: Blip2ForConditionalGeneration, device: torch.device
+        self,
+        model: Union[Blip2ForConditionalGeneration, Blip2ForImageTextRetrieval],
+        device: torch.device,
     ) -> None:
         """
         Prepare the BLIP2 model for inference by ensuring consistent device and dtype across components.
@@ -582,228 +612,21 @@ class BLIP2Quantizer:
         dtype = torch.float16  # BLIP2 uses float16 by default
 
         # Vision Model
-        model.vision_model.to(device, dtype)
+        self.model.vision_model.to(self.device, dtype)
         # Ensure Conv2d and other layers are properly moved
-        for module in model.vision_model.modules():
+        for module in self.model.vision_model.modules():
             if isinstance(module, (nn.Conv2d, nn.Linear)):
-                module.weight.data = module.weight.data.to(device, dtype)
+                module.weight.data = module.weight.data.to(self.device, dtype)
                 if module.bias is not None:
-                    module.bias.data = module.bias.data.to(device, dtype)
+                    module.bias.data = module.bias.data.to(self.device, dtype)
 
         # Q-Former
-        model.qformer.to(device, dtype)
-        model.query_tokens = nn.Parameter(model.query_tokens.to(device, dtype))
+        self.model.qformer.to(self.device, dtype)
+        self.model.query_tokens = nn.Parameter(self.model.query_tokens.to(self.device, dtype))
 
         # Language Model and Projection
-        model.language_model.to(device, dtype)
-        model.language_projection.to(device, dtype)
+        if isinstance(self.model, Blip2ForConditionalGeneration):
+            self.model.language_model.to(self.device, dtype)
+            self.model.language_projection.to(self.device, dtype)
 
         print("Model prepared for inference.")
-
-
-def get_parser():
-    parser = argparse.ArgumentParser(description="BLIP2 Quantization Script")
-
-    # Add arguments for bit sizes
-    parser.add_argument(
-        "--vision-bits",
-        type=int,
-        default=8,
-        choices=[2, 3, 4, 5, 6, 7, 8, 16],
-        help="Bit size for vision component",
-    )
-
-    parser.add_argument(
-        "--qformer-bits",
-        type=int,
-        default=6,
-        choices=[2, 3, 4, 5, 6, 7, 8, 16],
-        help="Bit size for qformer component",
-    )
-
-    parser.add_argument(
-        "--language-bits",
-        type=int,
-        default=4,
-        choices=[2, 3, 4, 5, 6, 7, 8, 16],
-        help="Bit size for language component",
-    )
-
-    # Add optional arguments for dataset configuration
-    parser.add_argument(
-        "--calibration-size", type=int, default=128, help="Size of calibration dataset"
-    )
-
-    parser.add_argument(
-        "--test-size", type=int, default=1024, help="Size of test dataset"
-    )
-
-    parser.add_argument(
-        "--chunk-size", type=int, default=32, help="Chunk size for processing"
-    )
-
-    parser.add_argument(
-        "--test-batch-size", type=int, default=128, help="Chunk size for processing"
-    )
-
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Random seed for reproducibility. If not provided, a random seed will be generated.",
-    )
-
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda:0",
-        help="Device to use (cuda:0, cuda:1, cpu, etc.)",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="gptq_results",
-        help="Directory to save results",
-    )
-
-    return parser
-
-
-def main():
-    # Parse arguments
-    parser = get_parser()
-    args = parser.parse_args()
-
-    # Generate random seed if not provided
-    if args.seed is None:
-        args.seed = random.randint(0, 2**32 - 1)
-        print(f"Generated random seed: {args.seed}")
-
-    # Set random seed
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
-    # Setup device
-    device = torch.device(
-        args.device if torch.cuda.is_available() and "cuda" in args.device else "cpu"
-    )
-
-    # Load model and processor
-    processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-
-    # Modified model loading without device_map and accelerate
-    print("Loading BLIP2 model...")
-    model = Blip2ForConditionalGeneration.from_pretrained(
-        "Salesforce/blip2-opt-2.7b",
-        torch_dtype=torch.float16,
-    )
-    # Move model to CPU initially
-    model = model.cpu()
-
-    # Free up memory
-    torch.cuda.empty_cache()
-
-    # Prepare COCO dataset
-    coco_dataset = COCODataset(
-        ann_file="./data/coco/annotations/captions_val2017.json",
-        img_dir="./data/coco/val2017",
-    )
-
-    # Generate random indices for calibration and test sets
-    total_indices = list(range(5000))  # Total dataset size
-
-    # Get random calibration indices
-    calibration_indices = random.sample(total_indices, args.calibration_size)
-
-    # Remove calibration indices from available indices
-    remaining_indices = list(set(total_indices) - set(calibration_indices))
-
-    # Get random test indices
-    test_indices = random.sample(remaining_indices, args.test_size)
-
-    # Prepare calibration data
-    images = [coco_dataset[i][0] for i in calibration_indices]
-    captions = [coco_dataset[i][1] for i in calibration_indices]
-    img_ids = [coco_dataset.ids[i] for i in calibration_indices]
-
-    # Create quantizer
-    quantizer = BLIP2Quantizer(model, processor, device, chunk_size=args.chunk_size)
-
-    # Update quantizer config with specified bit sizes
-    quantizer.config["vision"]["bits"] = args.vision_bits
-    quantizer.config["qformer"]["bits"] = args.qformer_bits
-    quantizer.config["language"]["bits"] = args.language_bits
-
-    # Print configuration
-    print("\nQuantization Configuration:")
-    print(f"Vision bits: {args.vision_bits}")
-    print(f"QFormer bits: {args.qformer_bits}")
-    print(f"Language bits: {args.language_bits}")
-    print(f"Calibration size: {args.calibration_size}")
-    print(f"Test size: {args.test_size}")
-    print(f"Device: {device}\n")
-
-    # Quantize model
-    quantizer.quantize(images)
-
-    # Prepare model for inference
-    BLIP2Quantizer.prepare_for_inference(model, device)
-
-    # Prepare test data
-    test_images = [coco_dataset[i][0] for i in test_indices]
-    test_captions = [coco_dataset[i][1] for i in test_indices]
-    test_img_ids = [coco_dataset.ids[i] for i in test_indices]
-
-    # Generate captions with quantized model
-    print("Generating captions...")
-    print(f"Testing images: {len(test_images)}")
-
-    # Process images in chunks to avoid memory issues
-    predicted_captions = []
-
-    for i in range(0, len(test_images), args.test_batch_size):
-        chunk_images = test_images[i : i + args.chunk_size]
-        inputs = processor(images=chunk_images, return_tensors="pt").to(device)
-
-        try:
-            with torch.no_grad():
-                out = model.generate(**inputs)
-
-            chunk_captions = [
-                processor.decode(out[j], skip_special_tokens=True).strip()
-                for j in range(len(chunk_images))
-            ]
-            predicted_captions.extend(chunk_captions)
-
-        except RuntimeError as e:
-            print(f"Error processing batch {i}: {e}")
-            # Move model to CPU and clear cache if we run into memory issues
-            model.cpu()
-            torch.cuda.empty_cache()
-            continue
-
-    # Prepare results
-    results = {
-        "predictions": [
-            {"image_id": img_id, "caption": caption}
-            for img_id, caption in zip(test_img_ids, predicted_captions)
-        ],
-        "references": test_captions,
-    }
-
-    os.makedirs(args.output_dir, exist_ok=True)
-    filename = (
-        f"gptq_blip2_{args.vision_bits}_{args.qformer_bits}_{args.language_bits}.json"
-    )
-    output_path = os.path.join(args.output_dir, filename)
-
-    print(f"\nSaving results to {output_path}")
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print("Results saved successfully")
-
-
-if __name__ == "__main__":
-    main()
-

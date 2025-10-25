@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # Function to check if user has any jobs in the queue
+user=""
 check_queue() {
-    squeue -u gdas | grep -q gdas
+    squeue -u $user | grep -q $user 
     return $?
 }
 

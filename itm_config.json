@@ -1,0 +1,13 @@
+{
+    "vit_layers": {"self_attn": 4, "self_attn_output": 4, "fc1": 4, "fc2": 4},
+    "qformer_layers": {
+        "self_attn": 16,
+        "self_attn_output": 16,
+        "intermediate_txt": 16,
+        "output_txt": 16,
+        "intermediate_query": 16,
+        "output_query": 16,
+        "cross_attn": 16,
+        "cross_attn_output": 16,
+    },
+}

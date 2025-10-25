@@ -1,9 +1,11 @@
+import json
+
 import torch
 import torch.nn.functional as F
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-import json
-from transformers import BertTokenizer, AutoProcessor
-import numpy as np
+from transformers import BertTokenizer
+
 
 class InferencePipeline:
     def __init__(self, model, device, processor=None):
@@ -12,46 +14,187 @@ class InferencePipeline:
         self.device = device
 
     def run_inference(self, dataset, task, **kwargs):
-        if task == 'image_captioning':
-            return self._run_image_captioning(dataset, **kwargs) 
-        elif task == 'image_text_retrieval':
+        if "image_captioning" in task:
+            return self._run_image_captioning(dataset, **kwargs)
+        elif "image_text_retrieval" in task:
             return self._run_retrieval(dataset, **kwargs)
+        elif "vqav2" in task:
+            return self._run_vqav2(dataset, **kwargs)
+        elif "gqa" in task:
+            return self._run_gqa(dataset, **kwargs)
         else:
             raise ValueError(f"Unsupported task: {task}")
 
-    def _run_image_captioning(self, dataset, max_samples=None):
+    def _prepare_data(self, data, max_samples=None, batch_size=None):
+        if max_samples is not None:
+            data.set_max_samples(max_samples)
+
+        if isinstance(data, torch.utils.data.Dataset):
+            data = DataLoader(
+                data,
+                batch_size=1 if batch_size is None else batch_size,
+                shuffle=False,
+                collate_fn=data.collater,
+            )
+
+        return data
+
+    def _run_image_captioning(
+        self,
+        dataset,
+        max_samples=None,
+        batch_size=None,
+        processor_kwargs=None,
+        generate_kwargs=None,
+    ):
+        processor_kwargs = processor_kwargs or {}
+        generate_kwargs = generate_kwargs or {}
+        data = self._prepare_data(
+            dataset, max_samples=max_samples, batch_size=batch_size
+        )
         results = []
         references = []
-        
+
+        for samples in tqdm(data):
+            images = samples["image"]
+            reference_captions = samples["caption"]
+            image_ids = samples["image_id"]
+
+            inputs = self.processor(
+                images=images, return_tensors="pt", **processor_kwargs
+            ).to(self.device)
+            with torch.no_grad():
+                out = self.model.generate(**inputs, **generate_kwargs)
+
+            captions = self.processor.batch_decode(out, skip_special_tokens=True)
+
+            for caption, image_id, reference_captions in zip(
+                captions, image_ids, reference_captions
+            ):
+                results.append({"image_id": image_id, "caption": caption})
+                references.append(captions)
+
+        return {"predictions": results, "references": references}
+
+    def _old_run_image_captioning(
+        self, dataset, max_samples=None, processor_kwargs={}, generate_kwargs={}
+    ):
+        results = []
+        references = []
+
         for i in tqdm(range(min(len(dataset), max_samples or len(dataset)))):
             image = dataset[i][0]
             captions = dataset[i][1]
             img_id = dataset.ids[i]
-            inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+            inputs = self.processor(
+                images=image, return_tensors="pt", **processor_kwargs
+            ).to(self.device)
             with torch.no_grad():
-                out = self.model.generate(**inputs)
-            
+                out = self.model.generate(**inputs, **generate_kwargs)
+
             caption = self.processor.decode(out[0], skip_special_tokens=True).strip()
-            
+
             results.append({"image_id": img_id, "caption": caption})
             references.append(captions)
 
-        return {
-            'predictions': results,
-            'references': references
-        }
+        return {"predictions": results, "references": references}
+
+    def _predict_answers(
+        self, images, questions, processor_kwargs=None, generate_kwargs=None
+    ):
+        processor_kwargs = processor_kwargs or {}
+        generate_kwargs = generate_kwargs or {}
+        inputs = self.processor(
+            images=images, text=questions, return_tensors="pt", **processor_kwargs
+        ).to(self.device)
+
+        with torch.no_grad():
+            out = self.model.generate(**inputs, **generate_kwargs)
+
+        answers = self.processor.batch_decode(out, skip_special_tokens=True)
+        return answers
+
+    def _run_gqa(
+        self,
+        data,
+        max_samples=None,
+        batch_size=None,
+        processor_kwargs=None,
+        generate_kwargs=None,
+    ):
+        processor_kwargs = processor_kwargs or {}
+        generate_kwargs = generate_kwargs or {}
+        results = []
+        data = self._prepare_data(data, max_samples=max_samples, batch_size=batch_size)
+
+        for samples in tqdm(data):
+            question_ids = samples["question_id"]
+            images = samples["image"]
+            questions = samples["text_input"]
+            gt_answers = samples["gt_answer"]
+
+            answers = self._predict_answers(
+                images, questions, processor_kwargs, generate_kwargs
+            )
+
+            for question_id, question, answer, gt_answer in zip(
+                question_ids, questions, answers, gt_answers
+            ):
+                if answer.startswith(question):
+                    answer = answer[len(question) :]
+                results.append(
+                    {
+                        "question_id": question_id,
+                        "answer": answer.strip(),
+                        "gt_answer": gt_answer,
+                    }
+                )
+
+        return results
+
+    def _run_vqav2(
+        self,
+        data,
+        max_samples=None,
+        batch_size=None,
+        processor_kwargs=None,
+        generate_kwargs=None,
+    ):
+        processor_kwargs = processor_kwargs or {}
+        generate_kwargs = generate_kwargs or {}
+        results = []
+        data = self._prepare_data(data, max_samples=max_samples, batch_size=batch_size)
+
+        for samples in tqdm(data):
+            images = samples["image"]
+            questions = samples["text_input"]
+            question_ids = samples["question_id"]
+
+            answers = self._predict_answers(
+                images, questions, processor_kwargs, generate_kwargs
+            )
+
+            for answer, question, question_id in zip(answers, questions, question_ids):
+                if answer.startswith(question):
+                    answer = answer[len(question) :]
+                results.append({"question_id": question_id, "answer": answer.strip()})
+
+        return results
 
     def _compute_itm(self, image_inputs, text_ids, text_atts):
-        image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(image_inputs.device)
+        image_atts = torch.ones(image_inputs.size()[:-1], dtype=torch.long).to(
+            image_inputs.device
+        )
         query_tokens = self.model.query_tokens.expand(image_inputs.shape[0], -1, -1)
-        query_attention_mask = torch.ones(query_tokens.size()[:-1], dtype=torch.long).to(image_inputs.device)
+        query_attention_mask = torch.ones(
+            query_tokens.size()[:-1], dtype=torch.long
+        ).to(image_inputs.device)
         attention_mask = torch.cat([query_attention_mask, text_atts], dim=1)
 
         del query_attention_mask, text_atts
 
         query_embeds = self.model.embeddings(
-            input_ids=text_ids,
-            query_embeds=query_tokens
+            input_ids=text_ids, query_embeds=query_tokens
         )
 
         query_length = query_tokens.shape[1]
@@ -63,36 +206,50 @@ class InferencePipeline:
             attention_mask=attention_mask,
             encoder_hidden_states=image_inputs,
             encoder_attention_mask=image_atts,
-            return_dict=True
+            return_dict=True,
         )
-        vl_embeddings = output_itm.last_hidden_state[:, : query_length, :]
+        vl_embeddings = output_itm.last_hidden_state[:, :query_length, :]
         del output_itm
         itm_logit = self.model.itm_head(vl_embeddings)
         itm_logit = itm_logit[:, :, 1].mean(dim=1).float()
         return itm_logit
 
-    def _run_retrieval(self, dataset, k_test=128, max_samples=None, text_bs=4):
+    def _run_retrieval(
+        self,
+        dataset,
+        max_samples=None,
+        k_test=None,
+        batch_size=4,
+        tokenizer_kwargs=None,
+        generate_kwargs=None,
+        processor_kwargs=None,
+    ):
         with torch.no_grad():
-            tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", truncation_side="right")
+            if not tokenizer_kwargs:
+                tokenizer_kwargs = {
+                    "padding": "max_length",
+                    "truncation": True,
+                    "max_length": 35,
+                }
+
+            tokenizer = BertTokenizer.from_pretrained(
+                "bert-base-uncased", truncation_side="right"
+            )
             tokenizer.add_special_tokens({"bos_token": "[DEC]"})
 
+            k_test = min(128, max_samples) if max_samples is not None and k_test is None else k_test
             num_samples = min(len(dataset), max_samples or len(dataset))
             texts = dataset.text
-            num_text = min(len(texts), 5*max_samples) if max_samples else len(texts)
+            num_text = min(len(texts), 5 * max_samples) if max_samples else len(texts)
             text_ids = []
             text_embeds = []
             text_atts = []
-            model = self.model
 
             print("Getting text embeddings")
-            for i in tqdm(range(0, num_text, text_bs)):
-                text = texts[i : min(num_text, i + text_bs)]
+            for i in tqdm(range(0, num_text, batch_size)):
+                text = texts[i : min(num_text, i + batch_size)]
                 text_input = tokenizer(
-                    text,
-                    padding="max_length",
-                    truncation=True,
-                    max_length=35,
-                    return_tensors="pt"
+                    text, return_tensors="pt", **tokenizer_kwargs
                 ).to(self.model.device)
 
                 query_embeds = self.model.embeddings(text_input.input_ids)
@@ -100,7 +257,7 @@ class InferencePipeline:
                     query_embeds=query_embeds,
                     query_length=0,
                     attention_mask=text_input.attention_mask,
-                    return_dict=True
+                    return_dict=True,
                 )
                 text_feat = text_output.last_hidden_state[:, 0, :]
                 text_embed = F.normalize(self.model.text_projection(text_feat))
@@ -119,25 +276,28 @@ class InferencePipeline:
                 image = dataset[i]["image"].unsqueeze(0).to(self.model.device)
 
                 vision_outputs = self.model.vision_model(
-                    pixel_values=image,
-                    return_dict=True
+                    pixel_values=image, return_dict=True
                 )
                 vit_feat = vision_outputs[0]
-                image_attention_mask = torch.ones(vit_feat.size()[:-1], dtype=torch.long, device=self.model.device)
+                image_attention_mask = torch.ones(
+                    vit_feat.size()[:-1], dtype=torch.long, device=self.model.device
+                )
                 query_tokens = self.model.query_tokens.expand(vit_feat.shape[0], -1, -1)
                 query_outputs = self.model.qformer(
                     query_embeds=query_tokens,
                     encoder_hidden_states=vit_feat,
                     encoder_attention_mask=image_attention_mask,
-                    return_dict=True
+                    return_dict=True,
                 )
                 del image_attention_mask
                 image_feat = query_outputs.last_hidden_state
-                image_embed = F.normalize(self.model.vision_projection(image_feat), dim=-1)
+                image_embed = F.normalize(
+                    self.model.vision_projection(image_feat), dim=-1
+                )
 
                 vit_feats.append(vit_feat.cpu())
                 image_embeds.append(image_embed)
-                
+
                 del image
                 del image_feat
 
@@ -153,30 +313,36 @@ class InferencePipeline:
 
             del image_embeds
 
-            score_matrix_i2t = torch.full(
-                (num_samples, num_text), -100.0
-            ).to(self.model.device)
+            score_matrix_i2t = torch.full((num_samples, num_text), -100.0).to(
+                self.model.device
+            )
 
             print("Calculating i2t score matrix")
             for i, sims in enumerate(tqdm(sims_matrix)):
                 topk_sim, topk_idx = sims.topk(k=k_test, dim=0)
                 image_inputs = vit_feats[i].repeat(k_test, 1, 1).to(self.model.device)
-                score = self._compute_itm(image_inputs, text_ids[topk_idx], text_atts[topk_idx]).float()
+                score = self._compute_itm(
+                    image_inputs, text_ids[topk_idx], text_atts[topk_idx]
+                ).float()
                 del image_inputs
 
                 score_matrix_i2t[i, topk_idx] = score + topk_sim
                 del topk_sim, topk_idx
 
             sims_matrix = sims_matrix.t()
-            score_matrix_t2i = torch.full(
-                (num_text, num_samples), -100.0
-            ).to(self.model.device)
+            score_matrix_t2i = torch.full((num_text, num_samples), -100.0).to(
+                self.model.device
+            )
 
             print("Calculating t2i score matrix")
             for i, sims in enumerate(tqdm(sims_matrix)):
                 topk_sim, topk_idx = sims.topk(k=k_test, dim=0)
                 image_inputs = vit_feats[topk_idx.cpu()].to(self.model.device)
-                score = self._compute_itm(image_inputs, text_ids[i].repeat(k_test, 1), text_atts[i].repeat(k_test, 1))
+                score = self._compute_itm(
+                    image_inputs,
+                    text_ids[i].repeat(k_test, 1),
+                    text_atts[i].repeat(k_test, 1),
+                )
 
                 score_matrix_t2i[i, topk_idx] = score + topk_sim
 
@@ -184,9 +350,9 @@ class InferencePipeline:
                 "scores_i2t": score_matrix_i2t.cpu().numpy(),
                 "scores_t2i": score_matrix_t2i.cpu().numpy(),
                 "txt2img": dataset.txt2img,
-                "img2txt": dataset.img2txt
+                "img2txt": dataset.img2txt,
             }
 
     def save_results(self, results, filename):
-        with open(filename, 'w') as f:
+        with open(filename, "w") as f:
             json.dump(results, f, indent=2)

@@ -1,6 +1,7 @@
 import os
-import requests
 import zipfile
+
+import requests
 from tqdm import tqdm
 
 
@@ -17,13 +18,16 @@ def download_and_unzip(url, target_dir):
     response = requests.get(url, stream=True)
     total_size = int(response.headers.get("content-length", 0))
 
-    with open(filepath, "wb") as file, tqdm(
-        desc=filename,
-        total=total_size,
-        unit="iB",
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as progress_bar:
+    with (
+        open(filepath, "wb") as file,
+        tqdm(
+            desc=filename,
+            total=total_size,
+            unit="iB",
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as progress_bar,
+    ):
         for data in response.iter_content(chunk_size=1024):
             size = file.write(data)
             progress_bar.update(size)
@@ -39,14 +43,18 @@ def download_and_unzip(url, target_dir):
 
 
 def main():
-    target_dir = "./data/vqa2"
-    images = "http://images.cocodataset.org/zips/val2017.zip"
-    annotations = "https://s3.amazonaws.com/cvmlp/vqa/mscoco/vqa/v2_Annotations_Val_mscoco.zip"
-    questions = "https://s3.amazonaws.com/cvmlp/vqa/mscoco/vqa/v2_Questions_Val_mscoco.zip"
+    target_dir = "./data/vqav2"
+    images = "http://images.cocodataset.org/zips/val2014.zip"
+    annotations = (
+        "https://s3.amazonaws.com/cvmlp/vqa/mscoco/vqa/v2_Annotations_Val_mscoco.zip"
+    )
+    questions = (
+        "https://s3.amazonaws.com/cvmlp/vqa/mscoco/vqa/v2_Questions_Val_mscoco.zip"
+    )
 
     download_and_unzip(images, target_dir)
-    download_and_unzip(annotations, target_dir+"/annotations")
-    download_and_unzip(questions, target_dir+"/questions")
+    download_and_unzip(annotations, target_dir + "/annotations")
+    download_and_unzip(questions, target_dir + "/questions")
 
     print("Download and unzip process completed.")
 
