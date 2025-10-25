@@ -1,39 +1,0 @@
-Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:02<00:02,  2.46s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:03<00:00,  1.75s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:03<00:00,  1.85s/it]
-Quantizing model...
-Quantized 116 layers at 16 bits
-loading annotations into memory...
-Done (t=0.03s)
-creating index...
-index created!
-Starting inference...
-  0%|          | 0/10 [00:00<?, ?it/s] 10%|█         | 1/10 [00:00<00:05,  1.68it/s] 20%|██        | 2/10 [00:00<00:03,  2.26it/s] 30%|███       | 3/10 [00:01<00:02,  2.65it/s] 40%|████      | 4/10 [00:01<00:02,  2.76it/s] 50%|█████     | 5/10 [00:01<00:01,  2.95it/s] 60%|██████    | 6/10 [00:02<00:01,  2.95it/s] 70%|███████   | 7/10 [00:02<00:00,  3.14it/s] 80%|████████  | 8/10 [00:02<00:00,  3.21it/s] 90%|█████████ | 9/10 [00:02<00:00,  3.65it/s]100%|██████████| 10/10 [00:03<00:00,  3.56it/s]100%|██████████| 10/10 [00:03<00:00,  3.06it/s]
-Inference Finished, Saving Results to ./results/17.json...
-  0%|          | 0/10 [00:00<?, ?it/s] 10%|█         | 1/10 [00:00<00:05,  1.63it/s] 20%|██        | 2/10 [00:00<00:03,  2.20it/s] 30%|███       | 3/10 [00:01<00:02,  2.58it/s] 40%|████      | 4/10 [00:01<00:02,  2.68it/s] 50%|█████     | 5/10 [00:01<00:01,  2.86it/s] 60%|██████    | 6/10 [00:02<00:01,  2.86it/s] 70%|███████   | 7/10 [00:02<00:00,  3.05it/s] 80%|████████  | 8/10 [00:02<00:00,  3.11it/s] 90%|█████████ | 9/10 [00:03<00:00,  3.52it/s]100%|██████████| 10/10 [00:03<00:00,  3.44it/s]100%|██████████| 10/10 [00:03<00:00,  2.97it/s]
-Inference Finished, Saving Results to ./results/17.json...
-Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:02<00:02,  2.46s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:03<00:00,  1.75s/it]Loading checkpoint shards: 100%|██████████| 2/2 [00:03<00:00,  1.85s/it]
-Quantizing model...
-Quantized 116 layers at 16 bits
-loading annotations into memory...
-Done (t=0.03s)
-creating index...
-index created!
-Starting inference...
-  0%|          | 0/10 [00:00<?, ?it/s] 10%|█         | 1/10 [00:00<00:05,  1.66it/s] 20%|██        | 2/10 [00:00<00:03,  2.24it/s] 30%|███       | 3/10 [00:01<00:02,  2.63it/s] 40%|████      | 4/10 [00:01<00:02,  2.74it/s] 50%|█████     | 5/10 [00:01<00:01,  2.93it/s] 60%|██████    | 6Quantizing model...
-Quantized 116 layers at 16 bits
-loading annotations into memory...
-Done (t=0.03s)
-creating index...
-index created!
-Starting inference...
-  0%|          | 0/10 [00:00<?, ?it/s] 10%|█         | 1/10 [00:00<00:05,  1.64it/s] 20%|██        | 2/10 [00:00<00:03,  2.22it/s] 30%|███       | 3/10 [00:01<00:02,  2.62it/s] 40%|████      | 4/10 [00:01<00:02,  2.73it/s] 50%|█████     | 5/10 [00:01<00:01,  2.92it/s] 60%|██████    | 6/10 [00:02<00:01,  2.93it/s] 70%|███████   | 7/10 [00:02<00:00,  3.12it/s] 80%|████████  | 8/10 [00:02<00:00,  3.19it/s] 90%|█████████ | 9/10 [00:03<00:00,  3.60it/s]100%|██████████| 10/10 [00:03<00:00,  3.53it/s]100%|██████████| 10/10 [00:03<00:00,  3.03it/s]
-Inference Finished, Saving Results to ./results/17.json...
-Loading checkpoint shards:   0%|          | 0/2 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 1/2 [00:59<00:59, 59.58s/it]Loading checkpoint shards: 100%|██████████| 2/2 [01:34<00:00, 45.10s/it]Loading checkpoint shards: 100%|██████████| 2/2 [01:34<00:00, 47.28s/it]
-Quantizing model...
-Quantized 116 layers at 16 bits
-loading annotations into memory...
-Done (t=0.04s)
-creating index...
-index created!
-Starting inference...
-  0%|          | 0/10 [00:00<?, ?it/s] 10%|█         | 1/10 [00:01<00:10,  1.13s/it] 20%|██        | 2/10 [00:01<00:05,  1.51it/s] 30%|███       | 3/10 [00:01<00:03,  2.02it/s] 40%|████      | 4/10 [00:02<00:02,  2.30it/s] 50%|█████     | 5/10 [00:02<00:01,  2.59it/s] 60%|██████    | 6/10 [00:02<00:01,  2.70it/s] 70%|███████   | 7/10 [00:03<00:01,  2.94it/s] 80%|████████  | 8/10 [00:03<00:00,  3.07it/s] 90%|█████████ | 9/10 [00:03<00:00,  3.50it/s]100%|██████████| 10/10 [00:03<00:00,  3.46it/s]100%|██████████| 10/10 [00:03<00:00,  2.62it/s]
-Inference Finished, Saving Results to ./results/17.json...
