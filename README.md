@@ -37,7 +37,7 @@ python3 download_gqa.py
 ## Running Evaluations
 The run scripts generally follow this structure:
 ```bash
-python run_[quantization_method].py --task <task_name> --config <path_to_config.json>
+python3 run_[quantization_method].py --task <task_name> --config <path_to_config.json>
 
 | Argument        | Type         | Default     | Description |
 |-----------------|--------------|-------------|-------------|
