@@ -4,18 +4,76 @@ This repo contains results, notebooks, and code related to quantizing blip2 with
 
 ## Links
 - [Home](https://gautomdas.github.io/mmq)
-- [3D Plot](https://gautomdas.github.io/mmq/3d_plot.html)
+- [3D Plot](https://gautomdas.github.io/mmq/plots/3d_plot.html)
 - [GitHub Repo](https://github.com/gautomdas/mmq)
 
-## To Edit and Run Repo
-To create env, run, and score:
+## Installing Dependencies
+Install dependencies for BLIP-2 tasks:
 ```
-# conda env create -f environment.yml`
-python run.py ./configs/1.json
-python score.py ./results/1.json
+pip3 install -r requirements_blip2.txt
 ```
-
+Install dependencies for LLAVA tasks:
+```
+pip3 install r requirements_llaval.txt
+```
 *IMPORTANT:* The scoring part of this pipeline relies on the `pycocoevalcap` python submodule. To also clone this into the repo run `git clone --recurse-submodules https://github.com/gautomdas/blip2-coco` or if you already downloaded the repo and the `pycocoevalcap` folder is still empty, run `git submodule init && git submodule update`.
+## Installing Datasets
+COCO:
+```
+python3 download_coco.py
+```
+Flickr30k (1K test set):
+```
+python3 download_flickr.py
+```
+VQAv2:
+```
+python3 download_vqav2.py
+```
+GQA:
+```
+python3 download_gqa.py
+```
+## Running Evaluations
+The run scripts generally follow this structure:
+```bash
+python run_[quantization_method].py --task <task_name> --config <path_to_config.json>
+
+| Argument        | Type         | Default     | Description |
+|-----------------|--------------|-------------|-------------|
+| `--distributed` | flag         | False       | Whether to use distributed inference in a single node (default: False); only supported for image captioning and VQA tasks. 
+| `--batch_size`  | int          | 64          | Batch size used during inference. 
+| `--num_workers` | int          | 1           | Number of worker threads for dataset loading. 
+| `--task`        | string       | —           | Task to run.
+| `--config`      | string       | —           | Path to the quantization config JSON file. 
+| `--max_samples` | int or None  | None        | If set, restricts evaluation to the first n samples of the dataset. 
+| `--dataset_dir` | string       | `./data`    | Path to the dataset directory. 
+| `--output_dir`  | string       | `./output`  | Directory where results will be saved.
+```
+### Available Tasks
+Uniform Quantization:
+```
+blip2-image_captioning
+blip2-image_retrieval
+```
+GPTQ:
+```
+blip2-image_captioning
+blip2-image_text_retrieval
+blip2-vqav2
+blip2-gqa
+llava-vqav2
+llava-gqa
+```
+AWQ:
+```
+blip2-image_captioning
+blip2-image_text_retrieval
+blip2-vqav2
+blip2-gqa
+llava-vqav2
+llava-gqa
+```
 
 ## To Recreate the Demo File
 1. Download the coco data set to the data folder using the following script (assumes you have the environment loaded): `python download_coco.py`
@@ -23,7 +81,6 @@ python score.py ./results/1.json
 3. `demo.ipynb` goes over the 3 main steps in the diagram above
 
 The following files are as follows:
-- `run.py`: The singular file used for quantization + inferencing. This takes in a config as `./configs/<#>.json` and runs it.
 - `blip_quantizer.py`: The quantization class that quantizes a the blip2 model.
 - `inference_pipeline.py`: The inference class that takes a model and tasks to produce `results/<#>.json`.
 - `scoring_pipeline.py`: The scoring class used to convert results to scores based on task. This is separate from the inferencer/quantizer because it only requires the CPU to run.
@@ -44,54 +101,3 @@ for each bit width:
       try with 2 other models quantized, not quantized, 1 of each, and 1 of each the other way
 ```
 
-## Running TODO
-- [ ] Add vqa2 dataset+test
-- [ ] Migrate datasets to HF
-- [ ] Look at error propagation through layers for quantizing
-- [ ] Add GPTQ and AWQ
-
-## Interesting Results
-
-1082.json:
-```
-{
-  "predictions": [
-    {
-      "image_id": 397133,
-      "caption": "the new xiaomi mi box"
-    },
-    {
-      "image_id": 37777,
-      "caption": "a white and black image of a smartphone"
-    },
-    {
-      "image_id": 252219,
-      "caption": "a white and blue box with a black and white logo"
-    },
-    {
-      "image_id": 87038,
-      "caption": "a white and black table with a white and black table cloth"
-    },
-    {
-      "image_id": 174482,
-      "caption": "an image of a white table with a black and white image"
-    },
-    {
-      "image_id": 403385,
-      "caption": "an image of a white wall with a black and white image of a speaker"
-    },
-    {
-      "image_id": 6818,
-      "caption": "the new apple tv 4k"
-    },
-    {
-      "image_id": 480985,
-      "caption": "a white and black image of a computer screen"
-    },
-    {
-      "image_id": 458054,
-      "caption": "a white and black square with a white and black square"
-    },
-	...
-}
-```
