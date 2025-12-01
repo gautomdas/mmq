@@ -14,7 +14,7 @@ pip3 install -r requirements_blip2.txt
 ```
 Install dependencies for LLAVA tasks:
 ```
-pip3 install r requirements_llaval.txt
+pip3 install r requirements_llava.txt
 ```
 *IMPORTANT:* The scoring part of this pipeline relies on the `pycocoevalcap` python submodule. To also clone this into the repo run `git clone --recurse-submodules https://github.com/gautomdas/blip2-coco` or if you already downloaded the repo and the `pycocoevalcap` folder is still empty, run `git submodule init && git submodule update`.
 ## Installing Datasets
